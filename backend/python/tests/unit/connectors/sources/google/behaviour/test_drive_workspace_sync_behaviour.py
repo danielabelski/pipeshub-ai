@@ -315,11 +315,6 @@ async def test_the_shared_drive_filter_skips_excluded_drives(ws: Workspace) -> N
     assert "sd-2" not in ws.records.record_groups
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="When a shared drive's file listing fails part-way, the sync stops that drive but still "
-    "saves its checkpoint, so the files on the pages it never read are skipped for good.",
-)
 async def test_a_failed_shared_drive_page_does_not_save_the_drive_checkpoint(ws: Workspace) -> None:
     ws.world.add_drive("sd-1", "Engineering", {ALICE: "organizer"})
     for n in range(4):
@@ -331,6 +326,37 @@ async def test_a_failed_shared_drive_page_does_not_save_the_drive_checkpoint(ws:
     await ws.sync()
 
     assert {f"f{n}.txt" for n in range(4)} <= ws.names()
+
+
+async def test_a_shared_drive_that_fails_part_way_through_a_full_resync_keeps_its_records(ws: Workspace) -> None:
+    ws.world.add_drive("sd-1", "Engineering", {ALICE: "organizer"})
+    for n in range(4):
+        ws.world.add_item(f"sd-f{n}", f"f{n}.txt", parent="sd-1")
+    for n in range(6):
+        ws.world.add_item(f"a{n}", f"alice-{n}.txt", parent="root-alice", owner=ALICE)
+    await ws.sync()
+    before = ws.names()
+    ws.sync_points.sync_points.clear()
+    ws.http.fail("GET", "/drive/v3/files", 500, "backendError", when=lambda r: r.query.get("driveId") == "sd-1" and bool(r.query.get("pageToken")))
+
+    await ws.sync()
+
+    assert ws.names() == before
+
+
+async def test_a_user_whose_sync_fails_on_a_full_resync_keeps_their_records(ws: Workspace) -> None:
+    for n in range(2):
+        ws.world.add_item(f"a{n}", f"alice-{n}.txt", parent="root-alice", owner=ALICE)
+    for n in range(4):
+        ws.world.add_item(f"b{n}", f"bob-{n}.txt", parent="root-bob", owner=BOB)
+    await ws.sync()
+    before = ws.names()
+    ws.sync_points.sync_points.clear()
+    ws.http.refused_subjects.add(ALICE)
+
+    await ws.sync()
+
+    assert ws.names() == before
 
 
 @pytest.mark.xfail(
@@ -924,11 +950,6 @@ async def test_a_database_failure_on_a_change_keeps_the_users_checkpoint(ws: Wor
     assert ws.user_checkpoint(ALICE) == checkpoint
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Full sync of a user's My Drive stops at the first empty page even when Drive sent a "
-    "nextPageToken, then saves the checkpoint, so later pages are never synced.",
-)
 async def test_an_empty_page_with_a_next_token_does_not_end_a_users_full_sync(ws: Workspace) -> None:
     for n in range(4):
         ws.world.add_item(f"a{n}", f"a{n}.txt", parent="root-alice", owner=ALICE)
