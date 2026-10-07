@@ -127,13 +127,14 @@ def _org(org_id: str, name: str) -> ResolvedEntity:
     return ResolvedEntity(entity=entity, graph_key=named_entity_key(org_id, entity.kind.value, entity.norm_key))
 
 
-async def _records(provider: IGraphDBProvider, org_id: str, count: int) -> list[str]:
-    ids = [f"{org_id}-rec-{i}" for i in range(count)]
+async def _records(provider: IGraphDBProvider, org_id: str, count: int, connector_id: str = "") -> list[str]:
+    ids = [f"{org_id}-rec-{connector_id}{i}" for i in range(count)]
     await provider.batch_upsert_nodes([
         {
             "id": record_id, "orgId": org_id, "recordName": f"Doc {i}",
             "externalRecordId": record_id, "recordType": "FILE", "origin": "CONNECTOR",
-            "connectorId": f"{org_id}-conn", "createdAtTimestamp": get_epoch_timestamp_in_ms(),
+            "connectorId": connector_id or f"{org_id}-conn", "virtualRecordId": f"v-{record_id}",
+            "createdAtTimestamp": get_epoch_timestamp_in_ms(),
         }
         for i, record_id in enumerate(ids)
     ], RECORDS)
@@ -201,6 +202,16 @@ async def test_range_and_overlap_queries_return_the_same_records(graph) -> None:
     page = await provider.query_named_entities(org_id, NamedEntityQuery(kinds=["currency"], currency="EUR", amount_min=0, amount_max=10_000))
     assert [entity["currency"] for entity in page["entities"]] == ["EUR"]
 
+    any_currency = NamedEntityQuery(kinds=["currency"], amount_min=1000, amount_max=2000)
+    page = await provider.query_named_entities(org_id, any_currency)
+    assert sorted(entity["currency"] for entity in page["entities"]) == ["EUR", "USD"]
+    hits = await provider.get_records_for_named_entities(org_id, None, any_currency)
+    assert {hit["recordId"] for hit in hits["hits"]} == {first, second}
+
+    ids = [_amount(org_id, "1250").graph_key, _amount(org_id, "90000").graph_key]
+    both = await provider.get_records_for_named_entities(org_id, ids, any_currency)
+    assert {(hit["recordId"], hit["entityId"]) for hit in both["hits"]} == {(first, ids[0])}
+
 
 async def test_name_filter_narrows_and_an_oversized_match_is_truncated(graph) -> None:
     provider, org_id, _ = graph
@@ -211,7 +222,9 @@ async def test_name_filter_narrows_and_an_oversized_match_is_truncated(graph) ->
 
     by_name = NamedEntityQuery(kinds=["organization"], name_prefix="acme")
     hits = await provider.get_records_for_named_entities(org_id, None, by_name)
-    assert {hit["recordId"] for hit in hits["hits"]} == {first}
+    assert [
+        (hit["recordId"], hit["virtualRecordId"], hit["connectorId"]) for hit in hits["hits"]
+    ] == [(first, f"v-{first}", f"{org_id}-conn")]
     page = await provider.query_named_entities(org_id, NamedEntityQuery(name_prefix="ACME"))
     assert [entity["name"] for entity in page["entities"]] == ["Acme Robotics"]
 

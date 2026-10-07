@@ -57,6 +57,45 @@ async def test_agent_submits_and_finishes():
     assert result.tool_calls == 2
 
 
+async def test_a_short_document_is_not_stopped_by_its_own_prompt_overhead():
+    # Each turn resends the prompt and tool schemas, far more than the 8-token document.
+    overhead = TokenUsage(input_tokens=900, output_tokens=20)
+    submit = _call("submit_entities", {
+        "entities": [{"text": "Acme", "block": 0, "kind": "organization", "normalized": ""}],
+    }, "1")
+    finish = _call("finish", {"reason": "done"}, "2")
+    submit.usage = finish.usage = overhead
+    doc = ExtractionDocument(units=[TextUnit(0, "b", "Acme signed the deal")], token_estimate=8)
+
+    result = await AgenticExtractionStrategy().extract(doc, [], _ctx(ScriptedTransport([submit, finish])))
+
+    assert result.termination_reason == "finish_ok"
+    assert [mention.surface for mention in result.mentions] == ["Acme"]
+
+
+async def test_the_configured_input_cap_still_stops_the_run():
+    usage = TokenUsage(input_tokens=900, output_tokens=20)
+    steps = [
+        _call("submit_entities", {
+            "entities": [{"text": "Acme", "block": 0, "kind": "organization", "normalized": ""}],
+        }, "1"),
+        _call("finish", {"reason": "done"}, "2"),
+    ]
+    for step in steps:
+        step.usage = usage
+    ctx = _ctx(ScriptedTransport(steps))
+    ctx = ExtractionContext(
+        org_id=ctx.org_id, norm=ctx.norm, enabled=ctx.enabled, transport=ctx.transport,
+        budgets=NamedEntityBudgets(max_turns=4, wall_clock_seconds=30, max_input_tokens=500),
+    )
+    doc = ExtractionDocument(units=[TextUnit(0, "b", "Acme signed the deal")], token_estimate=8)
+
+    result = await AgenticExtractionStrategy().extract(doc, [], ctx)
+
+    assert result.termination_reason == "budget_tokens"
+    assert [mention.surface for mention in result.mentions] == ["Acme"]
+
+
 async def test_no_progress_keeps_accepted_items():
     rejected = {"entities": [{"text": "not in the document", "block": 0, "kind": "organization", "normalized": ""}]}
     transport = ScriptedTransport([

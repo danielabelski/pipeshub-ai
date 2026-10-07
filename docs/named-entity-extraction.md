@@ -81,11 +81,28 @@ below.
 
 Search accepts `filters.entityFilters` (kinds, name, entity ids, a date
 range, an amount, a quantity). The gateway keeps that object; retrieval
-reads it before other filter keys are lowercased, intersects the hits with
-records the caller can already access, and refuses a match set that hit
-the graph cap. The name filter is a case-insensitive prefix. A filter that
-matches more entities than the cap is reported as truncated and not
-searched, rather than searched on an arbitrary subset.
+reads it before other filter keys are lowercased. The name filter is a
+case-insensitive prefix.
+
+The match runs first and grants nothing. It is one capped graph lookup
+that returns the mentioning records' virtual record ids, and those ids
+narrow the search the same way a tool's id list does. The normal
+permission path still decides what the user may read: with
+`ENABLE_CONTAINER_PERMISSION_FILTER` on, the search keeps its container
+scope and adjudicates the hits. An entity filter never loads the user's
+whole accessible-record map to intersect a few thousand matches. A filter
+that matches more entities than the cap is reported as truncated and not
+searched, rather than searched on an arbitrary subset. A failed lookup is
+an error, never "no match".
+
+`find_records_by_value` keeps the hits in the agent's scope (its apps and
+knowledge bases, `strictScope`, demo-app exclusions, through
+`load_entity_access_context`). It then permission-checks them in
+batches with `filter_accessible_record_ids`. It returns at most 50
+records and rejects a larger readable set, asking for a narrower filter,
+instead of returning a partial list; the check stops at the 51st readable
+record. If scope or permissions can't be resolved, the tool call fails
+rather than reporting an empty result.
 
 Agent tools, when the flag is on:
 

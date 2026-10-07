@@ -1,6 +1,7 @@
-"""Tests for POST /api/v1/extract/classify endpoint."""
+"""Tests for the POST /api/v1/extract/classify and /entities endpoints."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from types import SimpleNamespace
@@ -305,3 +306,69 @@ def test_classify_token_without_org_is_401() -> None:
     assert response.status_code == 401
     assert response.json()["detail"] == "Token missing orgId"
     document_extraction.classify.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/extract/entities
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def entities_app(monkeypatch: pytest.MonkeyPatch):
+    from app.modules.named_entities import extractor
+
+    llm = AsyncMock(return_value=(None, None, "fake", "fake-model"))
+    extract = AsyncMock(return_value=MagicMock(model_dump=MagicMock(return_value={"entities": []})))
+    monkeypatch.setattr(extractor, "indexing_llm", llm)
+    monkeypatch.setattr(extractor, "NamedEntityExtractor", MagicMock(return_value=MagicMock(extract=extract)))
+    app = _build_app(MagicMock())
+    app.container = SimpleNamespace(config_service=lambda: None)
+    app.state.entity_extraction_semaphore = asyncio.Semaphore(1)
+    return app, llm, extract
+
+
+def _post_entities(app: FastAPI, **body) -> Response:
+    return TestClient(app).post(
+        "/api/v1/extract/entities", json={"block_container": _empty_bc_dict(), **body},
+    )
+
+
+def test_entities_success_releases_the_slot(entities_app) -> None:
+    app, _, extract = entities_app
+
+    response = _post_entities(app, budgets={"max_turns": 3})
+
+    assert response.status_code == 200
+    assert extract.await_args.args[0].budgets.max_turns == 3
+    assert not app.state.entity_extraction_semaphore.locked()
+
+
+def test_entities_failure_releases_the_slot(entities_app) -> None:
+    app, llm, _ = entities_app
+    llm.side_effect = RuntimeError("no model")
+
+    response = _post_entities(app)
+
+    assert response.status_code == 500
+    assert response.json()["error"] == "RuntimeError"
+    assert not app.state.entity_extraction_semaphore.locked()
+
+
+def test_entities_when_busy_is_429_without_waiting(entities_app) -> None:
+    app, llm, _ = entities_app
+    app.state.entity_extraction_semaphore = asyncio.Semaphore(0)
+
+    response = _post_entities(app)
+
+    assert response.status_code == 429
+    llm.assert_not_awaited()
+
+
+def test_entities_invalid_budgets_is_422_and_takes_no_slot(entities_app) -> None:
+    app, llm, _ = entities_app
+
+    response = _post_entities(app, budgets={"max_turns": "lots"})
+
+    assert response.status_code == 422
+    llm.assert_not_awaited()
+    assert not app.state.entity_extraction_semaphore.locked()

@@ -1,4 +1,9 @@
-"""Indexing stage. Never raises: a failure here must not make the record unsearchable."""
+"""Indexing stage. A failure here must not make the record unsearchable.
+
+These functions can raise; ``SinkOrchestrator.extract_named_entities`` and
+``persist_named_entities`` are the only callers and turn any exception into a
+FAILED extraction or a logged warning. Call them through the orchestrator.
+"""
 
 from __future__ import annotations
 

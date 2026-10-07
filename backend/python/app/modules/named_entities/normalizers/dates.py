@@ -11,7 +11,7 @@ from __future__ import annotations
 import calendar
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.modules.named_entities.domain.kinds import EntityKind
@@ -24,7 +24,9 @@ _MONTHS = {
     "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
 }
 _ISO_DATE = re.compile(
-    r"^(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})(?:[T ](?P<H>\d{2}):(?P<M>\d{2}))?"
+    r"^(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})"
+    r"(?:[T ](?P<H>\d{2}):(?P<M>\d{2})(?::\d{2}(?:\.\d+)?)?"
+    r"(?P<off>Z|[+-]\d{2}:?\d{2})?)?$"
 )
 _QUARTER = re.compile(r"^Q(?P<q>[1-4])\s*(?:FY\s*)?(?P<y>\d{2,4})$", re.IGNORECASE)
 _MONTH_YEAR = re.compile(
@@ -101,6 +103,9 @@ def normalize_temporal(
     period = _RELATIVE_PERIOD.match(text)
     if period:
         return _period(period.group("which").casefold(), period.group("unit").casefold(), ctx)
+    interval = _iso_interval(text, kind, ctx) if "/" in text else None
+    if interval:
+        return interval
     iso = _ISO_DATE.match(text)
     if iso:
         return _iso(iso, kind, ctx)
@@ -148,12 +153,47 @@ def _quarter(q: int, year_raw: str, ctx: NormalizationContext) -> DateRangeValue
     )
 
 
-def _iso(match: re.Match[str], kind: EntityKind, ctx: NormalizationContext) -> DateRangeValue:
-    tz = _zone(ctx.tz)
+def _iso_interval(text: str, kind: EntityKind, ctx: NormalizationContext) -> DateRangeValue | None:
+    """ISO 8601 ``start/end``; a date-only end covers that whole day."""
+    left, _, right = text.partition("/")
+    first_match, last_match = _ISO_DATE.match(left.strip()), _ISO_DATE.match(right.strip())
+    if first_match is None or last_match is None:
+        return None
+    first, last = _iso(first_match, kind, ctx), _iso(last_match, kind, ctx)
+    if first is None or last is None or last.end_ms <= first.start_ms:
+        return None
+    minute = "minute" in (first.granularity, last.granularity)
+    return DateRangeValue(
+        start_ms=first.start_ms,
+        end_ms=last.end_ms,
+        timex=f"{first.timex}/{last.timex}",
+        granularity="minute" if minute else "day",
+        anchored=True,
+        anchor_source="explicit",
+    )
+
+
+def _offset(raw: str | None) -> timezone | None:
+    if not raw:
+        return None
+    if raw == "Z":
+        return UTC
+    sign = -1 if raw[0] == "-" else 1
+    digits = raw[1:].replace(":", "")
+    return timezone(sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:])))
+
+
+def _iso(match: re.Match[str], kind: EntityKind, ctx: NormalizationContext) -> DateRangeValue | None:
     year, month, day = int(match.group("y")), int(match.group("m")), int(match.group("d"))
     hour, minute = match.group("H"), match.group("M")
     if hour is not None:
-        start = datetime(year, month, day, int(hour), int(minute), tzinfo=tz)
+        try:
+            start = datetime(
+                year, month, day, int(hour), int(minute),
+                tzinfo=_offset(match.group("off")) or _zone(ctx.tz),
+            )
+        except ValueError:
+            return None
         end = start + timedelta(minutes=1)
         return DateRangeValue(
             start_ms=_ms(start),

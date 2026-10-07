@@ -2,7 +2,9 @@
 
 A record's blocks go through the production extraction stage (deterministic
 recognizers plus the agent loop) and persist stage, then the agent tool reads
-them back. Only the model and the user's accessible-record map are fakes.
+them back. Only the model, the agent's app scope and the per-record permission
+answer are fakes; the real permission query is covered by
+``test_record_visibility_e2e.test_search_permission_checks``.
 
   docker compose -f deployment/docker-compose/docker-compose.integration.graph-db.yml \\
     up -d --wait neo4j-graph-it arango-graph-it
@@ -24,6 +26,7 @@ from app.connectors.core.base.data_store.graph_data_store import GraphDataStore
 from app.models.blocks import Block, BlocksContainer, BlockType
 from app.modules.named_entities import stage
 from app.modules.named_entities.strategies.agent.transport import SlottedTransport
+from app.modules.retrieval.entity_permissions import EntityAccessContext
 from tests.integration.graph_db.test_named_entity_graph_contract import (  # noqa: F401
     _ms,
     _records,
@@ -69,17 +72,26 @@ def _record(record_id: str, org_id: str) -> SimpleNamespace:
 
 
 class _UserGraph:
-    """The real provider, seen by a user who can read only ``readable``."""
+    """The real provider, seen by a user whose permission check passes only ``readable``."""
 
-    def __init__(self, provider, readable: dict[str, str]) -> None:
+    def __init__(self, provider, readable: set[str]) -> None:
         self._provider = provider
         self._readable = readable
+        self.checked: list[str] = []
 
-    async def get_accessible_virtual_record_ids(self, **_):
-        return dict(self._readable)
+    async def filter_accessible_record_ids(self, record_ids, user_id, org_id):
+        self.checked.extend(record_ids)
+        return set(record_ids) & self._readable
 
     def __getattr__(self, name):
         return getattr(self._provider, name)
+
+
+def _agent_scope(*app_ids: str) -> EntityAccessContext:
+    return EntityAccessContext(
+        org_id="", user_key="u", app_level_app_ids=frozenset(app_ids),
+        record_level_app_ids=frozenset(), record_group_ids=frozenset(), app_names={},
+    )
 
 
 async def _index(provider, record) -> None:
@@ -92,11 +104,12 @@ async def _index(provider, record) -> None:
     )
 
 
-async def test_indexed_values_are_queryable_and_only_for_readable_records(graph) -> None:  # noqa: F811
+async def test_indexed_values_are_queryable_and_only_for_readable_in_scope_records(graph) -> None:  # noqa: F811
     provider, org_id, _ = graph
     readable, private = await _records(provider, org_id, 2)
-    await _index(provider, _record(readable, org_id))
-    await _index(provider, _record(private, org_id))
+    (other_app,) = await _records(provider, org_id, 1, connector_id=f"{org_id}-other")
+    for record_id in (readable, private, other_app):
+        await _index(provider, _record(record_id, org_id))
 
     stored = await provider.get_named_entities_for_record(readable)
     kinds = {row["kind"] for row in stored}
@@ -105,8 +118,12 @@ async def test_indexed_values_are_queryable_and_only_for_readable_records(graph)
     doc = await provider.get_document(readable, "records")
     assert (doc["entityExtractionStatus"], doc["entityExtractionStrategy"]) == ("COMPLETED", "agent")
 
-    state = {"graph_provider": _UserGraph(provider, {"v-readable": readable}), "org_id": org_id, "user_id": "u"}
-    with patch.object(values, "_named_entities_enabled", AsyncMock(return_value=True)):
+    user_graph = _UserGraph(provider, {readable, other_app})
+    state = {"graph_provider": user_graph, "org_id": org_id, "user_id": "u"}
+    with (
+        patch.object(values, "_named_entities_enabled", AsyncMock(return_value=True)),
+        patch.object(values, "load_entity_access_context", AsyncMock(return_value=_agent_scope(f"{org_id}-conn"))),
+    ):
         for query in (
             {"amount_min": 20_000, "amount_max": 30_000, "currency": "USD"},
             {"date_from": _ms(2026, 3, 1), "date_to": _ms(2026, 3, 31)},
@@ -114,7 +131,8 @@ async def test_indexed_values_are_queryable_and_only_for_readable_records(graph)
         ):
             ok, body = await values.execute_find_records_by_value(state, **query)
             assert ok, body
-            assert json.loads(body)["records"] == [{"virtualRecordId": "v-readable", "recordId": readable}], query
+            assert json.loads(body)["records"] == [{"virtualRecordId": f"v-{readable}", "recordId": readable}], query
+        assert other_app not in user_graph.checked
 
         ok, body = await values.execute_find_records_by_value(state, amount_min=1, amount_max=100, currency="USD")
         assert ok and json.loads(body)["records"] == []

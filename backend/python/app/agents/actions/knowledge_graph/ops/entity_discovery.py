@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+NAMED_ENTITIES_DISABLED_MSG = "Named-entity lookup is not enabled."
+
 
 async def _named_entities_enabled(state: "ChatState") -> bool:
     from app.services.featureflag.platform_settings import is_named_entity_extraction_enabled
@@ -72,8 +74,13 @@ async def execute_search_entities(
     kinds = [str(k).strip().lower() for k in (named_entity_kinds or []) if str(k).strip()]
     enabled = await _named_entities_enabled(state)
     if not enabled:
+        wanted_named = bool(kinds) or "named_entity" in requested
         requested = [t for t in requested if t != "named_entity"]
         kinds = []
+        # An empty type list means "every type"; never let the flag turn a
+        # named-entity search into that.
+        if wanted_named and not requested:
+            return False, _error(NAMED_ENTITIES_DISABLED_MSG)
     elif kinds and "named_entity" not in requested:
         requested.append("named_entity")
     valid_types = [t for t in dict.fromkeys(requested) if t in SEARCHABLE_ENTITY_TYPES]

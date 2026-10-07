@@ -23,6 +23,24 @@ _RECORD_LABEL = "Record"
 _CAP = 5000
 _ALIAS_CAP = 20
 
+# An empty currency or dimension means "any": the filter binds "" when the
+# caller gave only a range, and no stored value has an empty unit.
+_VALUE_FILTERS_AQL = """\
+  FILTER LENGTH(@kinds) == 0 OR n.kind IN @kinds
+  FILTER @prefix == "" OR STARTS_WITH(LOWER(n.name), @prefix)
+  FILTER @dateStart == null OR (n.startMs < @dateEnd AND n.endMs > @dateStart)
+  FILTER @amountMin == null OR ((@currency == "" OR n.currency == @currency) AND n.amountFloat >= @amountMin AND n.amountFloat <= @amountMax)
+  FILTER @quantityMin == null OR ((@dimension == "" OR n.dimension == @dimension) AND n.siValue >= @quantityMin AND n.siValue <= @quantityMax)
+  FILTER @percentMin == null OR (n.kind == "percentage" AND n.numericValue >= @percentMin AND n.numericValue <= @percentMax)"""
+
+_VALUE_FILTERS_CYPHER = """\
+WHERE (size($kinds) = 0 OR n.kind IN $kinds)
+  AND ($prefix = "" OR toLower(n.name) STARTS WITH $prefix)
+  AND ($dateStart IS NULL OR (n.startMs < $dateEnd AND n.endMs > $dateStart))
+  AND ($amountMin IS NULL OR (($currency = "" OR n.currency = $currency) AND n.amountFloat >= $amountMin AND n.amountFloat <= $amountMax))
+  AND ($quantityMin IS NULL OR (($dimension = "" OR n.dimension = $dimension) AND n.siValue >= $quantityMin AND n.siValue <= $quantityMax))
+  AND ($percentMin IS NULL OR (n.kind = "percentage" AND n.numericValue >= $percentMin AND n.numericValue <= $percentMax))"""
+
 # Existing nodes are left untouched: writing a popular node from every record
 # that mentions it would serialize those records on its lock.
 CREATE_AQL = f"""
@@ -87,12 +105,7 @@ RETURN count(a) AS aliases
 QUERY_AQL = f"""
 FOR n IN {_COLLECTION}
   FILTER n.orgId == @orgId
-  FILTER LENGTH(@kinds) == 0 OR n.kind IN @kinds
-  FILTER @prefix == "" OR STARTS_WITH(LOWER(n.name), @prefix)
-  FILTER @dateStart == null OR (n.startMs < @dateEnd AND n.endMs > @dateStart)
-  FILTER @amountMin == null OR (n.currency == @currency AND n.amountFloat >= @amountMin AND n.amountFloat <= @amountMax)
-  FILTER @quantityMin == null OR (n.dimension == @dimension AND n.siValue >= @quantityMin AND n.siValue <= @quantityMax)
-  FILTER @percentMin == null OR (n.kind == "percentage" AND n.numericValue >= @percentMin AND n.numericValue <= @percentMax)
+{_VALUE_FILTERS_AQL}
   SORT n._key
   LIMIT @skip, @limit
   RETURN n
@@ -100,12 +113,7 @@ FOR n IN {_COLLECTION}
 
 QUERY_CYPHER = f"""
 MATCH (n:{_LABEL} {{orgId: $orgId}})
-WHERE (size($kinds) = 0 OR n.kind IN $kinds)
-  AND ($prefix = "" OR toLower(n.name) STARTS WITH $prefix)
-  AND ($dateStart IS NULL OR (n.startMs < $dateEnd AND n.endMs > $dateStart))
-  AND ($amountMin IS NULL OR (n.currency = $currency AND n.amountFloat >= $amountMin AND n.amountFloat <= $amountMax))
-  AND ($quantityMin IS NULL OR (n.dimension = $dimension AND n.siValue >= $quantityMin AND n.siValue <= $quantityMax))
-  AND ($percentMin IS NULL OR (n.kind = "percentage" AND n.numericValue >= $percentMin AND n.numericValue <= $percentMax))
+{_VALUE_FILTERS_CYPHER}
 RETURN n
 ORDER BY n.id
 SKIP $skip LIMIT $limit
@@ -120,6 +128,8 @@ FOR e IN {_EDGE}
   LIMIT @limit
   RETURN {{
     recordId: PARSE_IDENTIFIER(e._from).key,
+    virtualRecordId: r.virtualRecordId,
+    connectorId: r.connectorId,
     entityId: PARSE_IDENTIFIER(e._to).key,
     blockIndexes: e.blockIndexes
   }}
@@ -129,7 +139,8 @@ RECORDS_CYPHER = f"""
 MATCH (r:{_RECORD_LABEL})-[e:{_REL}]->(n:{_LABEL})
 WHERE e.orgId = $orgId AND (($useIds AND n.id IN $ids) OR (NOT $useIds AND n.id IN $matched))
   AND coalesce(r.isDeleted, false) = false
-RETURN r.id AS recordId, n.id AS entityId, e.blockIndexes AS blockIndexes
+RETURN r.id AS recordId, r.virtualRecordId AS virtualRecordId, r.connectorId AS connectorId,
+       n.id AS entityId, e.blockIndexes AS blockIndexes
 LIMIT $limit
 """
 
@@ -203,24 +214,16 @@ RETURN r.id AS id
 MATCHED_KEYS_AQL = f"""
 FOR n IN {_COLLECTION}
   FILTER n.orgId == @orgId
-  FILTER LENGTH(@kinds) == 0 OR n.kind IN @kinds
-  FILTER @prefix == "" OR STARTS_WITH(LOWER(n.name), @prefix)
-  FILTER @dateStart == null OR (n.startMs < @dateEnd AND n.endMs > @dateStart)
-  FILTER @amountMin == null OR (n.currency == @currency AND n.amountFloat >= @amountMin AND n.amountFloat <= @amountMax)
-  FILTER @quantityMin == null OR (n.dimension == @dimension AND n.siValue >= @quantityMin AND n.siValue <= @quantityMax)
-  FILTER @percentMin == null OR (n.kind == "percentage" AND n.numericValue >= @percentMin AND n.numericValue <= @percentMax)
+  FILTER LENGTH(@ids) == 0 OR n._key IN @ids
+{_VALUE_FILTERS_AQL}
   LIMIT @limit
   RETURN n._key
 """
 
 MATCHED_KEYS_CYPHER = f"""
 MATCH (n:{_LABEL} {{orgId: $orgId}})
-WHERE (size($kinds) = 0 OR n.kind IN $kinds)
-  AND ($prefix = "" OR toLower(n.name) STARTS WITH $prefix)
-  AND ($dateStart IS NULL OR (n.startMs < $dateEnd AND n.endMs > $dateStart))
-  AND ($amountMin IS NULL OR (n.currency = $currency AND n.amountFloat >= $amountMin AND n.amountFloat <= $amountMax))
-  AND ($quantityMin IS NULL OR (n.dimension = $dimension AND n.siValue >= $quantityMin AND n.siValue <= $quantityMax))
-  AND ($percentMin IS NULL OR (n.kind = "percentage" AND n.numericValue >= $percentMin AND n.numericValue <= $percentMax))
+{_VALUE_FILTERS_CYPHER}
+  AND (size($ids) = 0 OR n.id IN $ids)
 RETURN n.id AS id
 LIMIT $limit
 """
@@ -382,10 +385,12 @@ class NamedEntityGraph:
         cap = min(max(1, limit), _CAP)
         fetch = cap + 1
         matched: list[str] = []
-        use_ids = bool(entity_ids)
-        if not use_ids and query is not None:
+        # With a query, ids only narrow it; both constraints hold.
+        use_ids = bool(entity_ids) and query is None
+        if query is not None:
             binds = _bind(query, skip=0, limit=fetch)
             binds["orgId"] = org_id
+            binds["ids"] = entity_ids or []
             statement = MATCHED_KEYS_AQL if self._dialect == "arango" else MATCHED_KEYS_CYPHER
             rows = await self._execute(statement, binds) or []
             matched = [row if isinstance(row, str) else (row.get("_key") or row.get("id") or "") for row in rows]

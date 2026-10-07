@@ -25,6 +25,8 @@ from app.api.middlewares.auth import (
 )
 from app.config.constants.service import TokenScopes
 from app.models.blocks import BlocksContainer
+from app.modules.named_entities.domain.config import NamedEntityBudgets
+from app.modules.named_entities.domain.kinds import EntityKind
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +135,7 @@ class ExtractEntitiesRequest(BaseModel):
     reference_time_ms: int | None = None
     tz: str = "UTC"
     enabled_kinds: list[str] = []
-    budgets: dict | None = None
+    budgets: NamedEntityBudgets | None = None
 
 
 class ExtractEntitiesResponse(BaseModel):
@@ -151,31 +153,27 @@ async def extract_entities(
     """Extract typed entities. The model is loaded per request, not at startup."""
     org_id = service_token_org(claims, body.org_id)
     semaphore = getattr(request.app.state, "entity_extraction_semaphore", None)
-    if semaphore is not None and semaphore.locked():
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content=ExtractEntitiesResponse(success=False, error="entity extraction is busy").model_dump(),
-        )
-    from app.modules.named_entities.domain.config import NamedEntityBudgets
-    from app.modules.named_entities.domain.kinds import EntityKind
-    from app.modules.named_entities.extractor import NamedEntityExtractor, NamedEntityRequest, indexing_llm
-
-    enabled = None
-    if body.enabled_kinds:
-        parsed = set()
-        for raw in body.enabled_kinds:
-            try:
-                parsed.add(EntityKind(raw))
-            except ValueError:
-                continue
-        enabled = frozenset(parsed)
-    budgets = NamedEntityBudgets.model_validate(body.budgets) if body.budgets else None
-    config_service = request.app.container.config_service()
-    held = False
+    if semaphore is not None:
+        if semaphore.locked():
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content=ExtractEntitiesResponse(success=False, error="entity extraction is busy").model_dump(),
+            )
+        # No await between the check and here, so this takes the free slot without waiting.
+        await semaphore.acquire()
     try:
-        if semaphore is not None:
-            await semaphore.acquire()
-            held = True
+        from app.modules.named_entities.extractor import NamedEntityExtractor, NamedEntityRequest, indexing_llm
+
+        enabled = None
+        if body.enabled_kinds:
+            parsed = set()
+            for raw in body.enabled_kinds:
+                try:
+                    parsed.add(EntityKind(raw))
+                except ValueError:
+                    continue
+            enabled = frozenset(parsed)
+        config_service = request.app.container.config_service()
         llm, transport, provider, model = await indexing_llm(config_service)
         extraction = await NamedEntityExtractor().extract(
             NamedEntityRequest(
@@ -186,7 +184,7 @@ async def extract_entities(
                 reference_time_ms=body.reference_time_ms,
                 tz=body.tz,
                 enabled=enabled,
-                budgets=budgets,
+                budgets=body.budgets,
                 llm=llm,
                 transport=transport,
                 provider_name=provider,
@@ -201,7 +199,7 @@ async def extract_entities(
             content=ExtractEntitiesResponse(success=False, error=type(exc).__name__).model_dump(),
         )
     finally:
-        if held and semaphore is not None:
+        if semaphore is not None:
             semaphore.release()
     return JSONResponse(
         status_code=status.HTTP_200_OK,

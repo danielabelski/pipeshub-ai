@@ -73,6 +73,33 @@ def test_periods_cover_the_whole_period(surface, granularity, start, end):
     assert (value.granularity, value.start_ms, value.end_ms) == (granularity, _ms(*start), _ms(*end))
 
 
+def test_an_iso_interval_keeps_both_ends():
+    value = normalize_temporal(EntityKind.DATE_RANGE, "2024-01-01/2024-03-31", NormalizationContext(tz="UTC"))
+    assert value is not None
+    assert (value.start_ms, value.end_ms) == (_ms(2024, 1, 1), _ms(2024, 4, 1))
+    assert value.timex == "2024-01-01/2024-03-31"
+
+
+def test_a_backwards_iso_interval_is_not_a_range():
+    assert normalize_temporal(EntityKind.DATE_RANGE, "2024-03-31/2024-01-01", NormalizationContext(tz="UTC")) is None
+    assert normalize_temporal(EntityKind.DATE, "2024-01-01 and later", NormalizationContext(tz="UTC")) is None
+
+
+def test_an_explicit_utc_offset_wins_over_the_deployment_zone():
+    value = normalize_temporal(
+        EntityKind.DATE_TIME, "2024-01-01T10:00:00Z", NormalizationContext(tz="America/New_York"),
+    )
+    assert value is not None
+    assert value.start_ms == int(datetime(2024, 1, 1, 10, tzinfo=UTC).timestamp() * 1000)
+
+
+def test_a_slash_date_still_reaches_the_fallback_parser():
+    pytest.importorskip("dateparser")
+    value = normalize_temporal(EntityKind.DATE, "03/15/2026", NormalizationContext(tz="UTC"))
+    assert value is not None
+    assert value.start_ms == _ms(2026, 3, 15)
+
+
 @pytest.mark.parametrize(
     ("text", "surface", "kind"),
     [
@@ -179,6 +206,14 @@ def test_kilometres_convert_to_metres():
     assert value is not None
     assert value.si_unit == "m"
     assert value.si_value == 5000
+
+
+def test_a_speed_is_not_read_as_a_length():
+    (mention,) = ValueCandidateRecognizer(frozenset({EntityKind.DIMENSION})).recognize(
+        [TextUnit(0, "b", "Keep it under 60 km/h here.")]
+    )
+    assert mention.surface == "60 km/h"
+    assert normalize_quantity(mention.surface).dimension == "speed"
 
 
 @pytest.mark.parametrize(

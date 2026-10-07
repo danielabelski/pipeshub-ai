@@ -123,6 +123,31 @@ async def test_extraction_failure_returns_failed_and_does_not_raise(caplog):
     assert _SECRET_NAME not in caplog.text
 
 
+@pytest.mark.parametrize("config", [{"budgets": {"max_turns": "lots"}}, {"tz": 7}])
+async def test_a_malformed_config_blob_returns_failed(config):
+    sink = _sink()
+    sink.config_service.get_config = AsyncMock(return_value=config)
+    record = SimpleNamespace(**vars(_record()), block_containers=SimpleNamespace(blocks=[object()]))
+    with patch(
+        "app.services.featureflag.platform_settings.is_named_entity_extraction_enabled",
+        AsyncMock(return_value=True),
+    ):
+        result = await sink.extract_named_entities(SimpleNamespace(record=record))
+    assert result.status == "FAILED"
+
+
+async def test_a_flag_off_clear_failure_does_not_fail_the_record(caplog):
+    graph = MagicMock(get_named_entities_for_record=AsyncMock(side_effect=RuntimeError(f"down {_SECRET_NAME}")))
+    sink = _sink(graph)
+    with patch(
+        "app.services.featureflag.platform_settings.is_named_entity_extraction_enabled",
+        AsyncMock(return_value=False),
+    ):
+        await sink.persist_named_entities(SimpleNamespace(record=_record()), _extraction())
+    assert "Named-entity persist failed for record rec-1: RuntimeError" in caplog.text
+    assert _SECRET_NAME not in caplog.text
+
+
 async def test_flag_off_clears_only_records_that_had_entities():
     store = _store()
     graph = MagicMock(get_named_entities_for_record=AsyncMock(return_value=[]))

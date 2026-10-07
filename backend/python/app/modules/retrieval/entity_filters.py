@@ -1,8 +1,10 @@
-"""Resolve typed entity filters into the records a search may see.
+"""Resolve typed entity filters into the records that mention a match.
 
-The filter is parsed before retrieval lowercases keys, then intersected with
-the accessible virtual-record map. A truncated match is an error, not a
-partial answer: a capped set would silently drop records the filter named.
+Matching grants nothing. It is one capped graph lookup, and each caller then
+checks only these hits against what the user may read, so a filter never
+loads the user's whole accessible corpus to intersect a few thousand records.
+A truncated match is an error, not a partial answer: a capped set would
+silently drop records the filter named.
 """
 
 from __future__ import annotations
@@ -15,44 +17,59 @@ from app.modules.named_entities.graph_ops import NamedEntityQuery
 _LOW = -1e308
 _HIGH = 1e308
 
+TOO_BROAD_MESSAGE = "filter too broad, narrow it"
+
+
+class EntityFilterUnavailableError(Exception):
+    """The named-entity graph could not answer; never the same as no match."""
+
 
 @dataclass(frozen=True, slots=True)
-class EntityFilterDecision:
-    allowed: dict[str, str]
+class EntityFilterHit:
+    record_id: str
+    virtual_record_id: str
+    connector_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class EntityFilterMatch:
+    hits: tuple[EntityFilterHit, ...] = ()
     error: str | None = None
+    # False when the filter names no constraint, so it must not narrow anything.
+    constrained: bool = True
+
+    @property
+    def virtual_record_ids(self) -> list[str]:
+        return list(dict.fromkeys(hit.virtual_record_id for hit in self.hits if hit.virtual_record_id))
 
 
 class EntityFilterResolver:
     def __init__(self, graph: Any) -> None:
         self._graph = graph
 
-    async def resolve(
-        self,
-        org_id: str,
-        raw: dict[str, Any],
-        accessible: dict[str, str],
-    ) -> EntityFilterDecision:
+    async def match(self, org_id: str, raw: dict[str, Any]) -> EntityFilterMatch:
         if not isinstance(raw, dict):
-            return EntityFilterDecision(allowed={}, error="entityFilters must be an object")
+            return EntityFilterMatch(error="entityFilters must be an object")
         entity_ids = [str(item) for item in (raw.get("entityIds") or []) if item]
-        query = None if entity_ids else _query_from(raw)
+        query = _query_from(raw)
         if not entity_ids and query is None:
-            return EntityFilterDecision(allowed=accessible)
-        hits = await self._graph.get_records_for_named_entities(
-            org_id,
-            entity_ids or None,
-            query,
+            return EntityFilterMatch(constrained=False)
+        try:
+            result = await self._graph.get_records_for_named_entities(org_id, entity_ids or None, query)
+        except Exception as exc:
+            raise EntityFilterUnavailableError("named-entity lookup failed") from exc
+        if result.get("truncated"):
+            return EntityFilterMatch(error=TOO_BROAD_MESSAGE)
+        hits = tuple(
+            EntityFilterHit(
+                record_id=str(row["recordId"]),
+                virtual_record_id=str(row.get("virtualRecordId") or ""),
+                connector_id=str(row.get("connectorId") or ""),
+            )
+            for row in result.get("hits") or []
+            if row.get("recordId")
         )
-        if hits.get("truncated"):
-            return EntityFilterDecision(allowed={}, error="filter too broad, narrow it")
-        record_to_virtual = {record_id: virtual for virtual, record_id in accessible.items()}
-        allowed: dict[str, str] = {}
-        for row in hits.get("hits") or []:
-            record_id = str(row.get("recordId") or "")
-            virtual = record_to_virtual.get(record_id)
-            if virtual:
-                allowed[virtual] = record_id
-        return EntityFilterDecision(allowed=allowed)
+        return EntityFilterMatch(hits=hits)
 
 
 def _bound(raw: dict[str, Any], low_key: str, high_key: str) -> tuple[float | None, float | None]:

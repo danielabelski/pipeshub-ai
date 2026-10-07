@@ -108,12 +108,14 @@ class AgenticExtractionStrategy:
             hooks.on(HookEvent.PRE_TURN).use(_pre)
             hooks.on(HookEvent.POST_TURN).use(_post)
 
-        input_budget = min(max(1, 3 * doc.token_estimate), budgets.max_input_tokens)
         runtime = AgentRuntime(
             transport_registry=transports,
             tool_registry=registry,
             budget=BudgetTracker(
-                max_input_tokens=input_budget,
+                # Counted across turns, each of which resends the prompt, tool
+                # schemas and history, so a cap scaled to document size alone
+                # can block the second turn of a short document.
+                max_input_tokens=budgets.max_input_tokens,
                 max_output_tokens=budgets.max_output_tokens,
                 max_tool_calls=budgets.max_tool_calls,
                 max_turns=budgets.max_turns,

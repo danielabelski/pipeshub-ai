@@ -208,18 +208,37 @@ def _entity_metadata(payload: dict[str, Any] | None) -> dict[str, Any]:
 
 def _type_groups(
     entity_types: list[str] | None,
-) -> list[tuple[str | list[str] | None, str | None]]:
+    *,
+    by_kind: bool = False,
+) -> list[tuple[str | list[str] | None, str | list[str] | None]]:
     """``(must entityType, must_not entityType)`` per request of a pass:
-    record titles apart from everything else when both are wanted."""
+    record titles apart from everything else when both are wanted.
+
+    ``by_kind`` gives named entities a request of their own, the only one
+    that carries the kind filter; no other request may return them.
+    """
     from app.models.entities import EntityType
 
     record = EntityType.RECORD.value
+    named = EntityType.NAMED_ENTITY.value
     if not entity_types:
+        if by_kind:
+            return [(None, [record, named]), ([named], None), (record, None)]
         return [(None, record), (record, None)]
     others = [t for t in entity_types if t != record]
-    if record in entity_types and others:
-        return [(others, None), (record, None)]
-    return [(list(entity_types), None)]
+    groups: list[tuple[str | list[str] | None, str | list[str] | None]] = (
+        [(others, None), (record, None)] if record in entity_types and others else [(list(entity_types), None)]
+    )
+    if not by_kind:
+        return groups
+    split: list[tuple[str | list[str] | None, str | list[str] | None]] = []
+    for must, must_not in groups:
+        if isinstance(must, list) and named in must and len(must) > 1:
+            split.append(([t for t in must if t != named], must_not))
+            split.append(([named], None))
+        else:
+            split.append((must, must_not))
+    return split
 
 
 def _interleave(groups: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -1433,7 +1452,7 @@ class EntityVectorStore:
         from app.services.vector_db.models import FusionMethod, HybridSearchRequest
 
         dense_vec, sparse_vec = await self._query_vectors(query)
-        groups = _type_groups(entity_types)
+        groups = _type_groups(entity_types, by_kind=bool(kinds))
         requests = []
         for index in searchable:
             scope = passes[index]

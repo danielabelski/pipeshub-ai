@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from app.modules.entity_resolution.models import ResolutionMode
 from app.modules.named_entities.domain.config import NamedEntityBudgets
 from app.modules.named_entities.domain.kinds import EntityKind
@@ -18,7 +20,10 @@ from app.modules.named_entities.strategies.base import (
     ExtractionDocument,
 )
 from app.modules.named_entities.strategies.selector import ExtractionStrategySelector
-from app.modules.retrieval.entity_filters import EntityFilterResolver
+from app.modules.retrieval.entity_filters import (
+    EntityFilterResolver,
+    EntityFilterUnavailableError,
+)
 
 
 def _org(name: str) -> NamedEntity:
@@ -81,25 +86,67 @@ class _Records:
         self.payload = payload
 
     async def get_records_for_named_entities(self, org_id, entity_ids, query, limit=5000):
+        self.args = (entity_ids, query)
         return self.payload
 
 
-async def test_entity_filter_intersects_accessible_records():
-    graph = _Records({"hits": [{"recordId": "r1"}, {"recordId": "r2"}], "truncated": False})
-    decision = await EntityFilterResolver(graph).resolve(
-        "org",
-        {"entityIds": ["e1"]},
-        {"v1": "r1", "v2": "other"},
+async def test_entity_ids_and_a_typed_range_are_both_applied():
+    graph = _Records({"hits": [], "truncated": False})
+    await EntityFilterResolver(graph).match(
+        "org", {"entityIds": ["e1"], "amount": {"min": 10, "max": 20, "currency": "USD"}},
     )
-    assert decision.error is None
-    assert decision.allowed == {"v1": "r1"}
+    ids, query = graph.args
+    assert ids == ["e1"]
+    assert (query.amount_min, query.amount_max, query.currency) == (10, 20, "USD")
+
+
+async def test_records_for_narrows_the_typed_match_to_the_given_ids():
+    calls: list[tuple[str, dict]] = []
+
+    async def execute(statement, binds, **_):
+        calls.append((statement, dict(binds)))
+        return ["e1"] if "RETURN n._key" in statement else []
+
+    graph = NamedEntityGraph(execute, "arango")
+    await graph.records_for("org", ["e1", "e2"], NamedEntityQuery(kinds=["currency"]), limit=10)
+
+    (matched_sql, matched_binds), (_, record_binds) = calls
+    assert "n._key IN @ids" in matched_sql and matched_binds["ids"] == ["e1", "e2"]
+    assert (record_binds["useIds"], record_binds["matched"]) == (False, ["e1"])
+
+
+async def test_entity_filter_returns_the_mentioning_records_and_grants_nothing():
+    graph = _Records({"hits": [
+        {"recordId": "r1", "virtualRecordId": "v1", "connectorId": "app-1"},
+        {"recordId": "r2", "virtualRecordId": "v1", "connectorId": "app-2"},
+        {"recordId": "r3", "virtualRecordId": "v3", "connectorId": "app-1"},
+    ], "truncated": False})
+    match = await EntityFilterResolver(graph).match("org", {"entityIds": ["e1"]})
+    assert match.error is None
+    assert [hit.record_id for hit in match.hits] == ["r1", "r2", "r3"]
+    assert match.virtual_record_ids == ["v1", "v3"]
 
 
 async def test_truncated_entity_filter_is_an_error():
     graph = _Records({"hits": [], "truncated": True})
-    decision = await EntityFilterResolver(graph).resolve("org", {"entityIds": ["e1"]}, {"v1": "r1"})
-    assert decision.error == "filter too broad, narrow it"
-    assert decision.allowed == {}
+    match = await EntityFilterResolver(graph).match("org", {"entityIds": ["e1"]})
+    assert match.error == "filter too broad, narrow it"
+    assert match.hits == ()
+
+
+async def test_an_entity_filter_without_a_constraint_narrows_nothing():
+    graph = _Records({"hits": [], "truncated": False})
+    match = await EntityFilterResolver(graph).match("org", {"kinds": []})
+    assert not match.constrained
+
+
+async def test_a_failed_entity_lookup_is_not_an_empty_match():
+    class _Down:
+        async def get_records_for_named_entities(self, *args, **kwargs):
+            raise RuntimeError("graph down")
+
+    with pytest.raises(EntityFilterUnavailableError):
+        await EntityFilterResolver(_Down()).match("org", {"entityIds": ["e1"]})
 
 
 def test_selector_failure_ladder():

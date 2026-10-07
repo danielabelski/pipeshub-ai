@@ -37,7 +37,7 @@ _MONEY = re.compile(
 # No \b after "%": it is not a word character, so "12.5% " has no boundary there.
 _PERCENT = re.compile(r"(?<![\d.])\d+(?:\.\d+)?\s?(?:%|(?:bps|percent|per\s?cent|pct)\b)", re.IGNORECASE)
 _QUANTITY = re.compile(
-    r"(?<!\d)\d+(?:\.\d+)?\s?(?:km|m|cm|mm|kg|g|lb|lbs|mi|ft|mph|kph|km/h|°C|°F|celsius|fahrenheit)\b",
+    r"(?<!\d)\d+(?:\.\d+)?\s?(?:km/h|km|m|cm|mm|kg|g|lb|lbs|mi|ft|mph|kph|°C|°F|celsius|fahrenheit)\b",
     re.IGNORECASE,
 )
 _AGE = re.compile(r"\b\d{1,3}[\-\s]?year[\-\s]?old\b", re.IGNORECASE)
