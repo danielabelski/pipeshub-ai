@@ -229,6 +229,8 @@ class CollectionNames(Enum):
     BELONGS_TO_LANGUAGE = "belongsToLanguage"
     TOPICS = "topics"
     BELONGS_TO_TOPIC = "belongsToTopic"
+    NAMED_ENTITIES = "namedEntities"
+    MENTIONS_ENTITY = "mentionsEntity"
     SUBCATEGORIES1 = "subcategories1"
     SUBCATEGORIES2 = "subcategories2"
     SUBCATEGORIES3 = "subcategories3"

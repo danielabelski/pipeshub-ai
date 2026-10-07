@@ -6648,3 +6648,34 @@ class IGraphDBProvider(ABC):
             Exception: on write failure.
         """
         pass
+
+    async def create_named_entities_if_absent(self, nodes: list[dict]) -> None:
+        raise NotImplementedError
+
+    async def find_named_entities(self, org_id: str, kind: str, norm_keys: list[str]) -> list[dict]:
+        raise NotImplementedError
+
+    async def add_named_entity_aliases(
+        self, org_id: str, kind: str, key: str, aliases: list[str], normalized: list[str]
+    ) -> None:
+        raise NotImplementedError
+
+    async def query_named_entities(self, org_id: str, query) -> dict:
+        raise NotImplementedError
+
+    async def get_records_for_named_entities(
+        self, org_id: str, entity_ids: list[str] | None = None, query=None, limit: int = 5000
+    ) -> dict:
+        raise NotImplementedError
+
+    async def get_named_entities_for_record(self, record_id: str) -> list[dict]:
+        raise NotImplementedError
+
+    async def copy_named_entity_mentions(self, source_key: str, target_key: str) -> int:
+        raise NotImplementedError
+
+    async def delete_orphan_named_entities(self, org_id: str, batch_size: int = 200) -> list[str]:
+        raise NotImplementedError
+
+    async def set_entity_extraction_status(self, record_id: str, status: str, strategy: str) -> None:
+        raise NotImplementedError

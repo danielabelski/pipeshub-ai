@@ -22,6 +22,7 @@ from app.modules.entity_resolution.models import (
     TaxonomyKind,
 )
 from app.modules.entity_resolution.normalizer import display_form, normalize_name
+from app.modules.transformers.edge_reconciler import EdgeReconciler
 from app.modules.transformers.transformer import TransformContext, Transformer
 from app.services.graph_db.interface.graph_db_provider import IGraphDBProvider
 from app.utils.time_conversion import get_epoch_timestamp_in_ms
@@ -322,70 +323,22 @@ class GraphDBTransformer(Transformer):
                 stored as ``extractedName`` on the edge so a merge can be
                 undone per record later
         """
-        # 1. Fetch existing edges for this record
         # A failed read must not look like "no edges": every new link would be
         # re-created and none of the stale ones removed, outside any retry.
-        existing_edges = await tx_store.get_edges_from_node_with_target_name(
-            record_from, edge_collection, raise_on_error=True
+        properties = {
+            to_full: {"extractedName": name}
+            for to_full, name in (extracted_names or {}).items()
+            if name
+        }
+        await EdgeReconciler(self.logger).reconcile(
+            tx_store,
+            record_id=record_id,
+            record_from=record_from,
+            edge_collection=edge_collection,
+            new_tos=new_tos,
+            label=label,
+            edge_properties=properties,
         )
-        self.logger.debug("%d existing %s edges for record %s", len(existing_edges), label, record_id)
-        existing_by_to: Dict[str, Dict] = {e["_to"]: e for e in existing_edges}
-
-        # 2. Create edges that are new (in new but not in existing)
-        edges_to_create: List[Dict] = []
-        sorted_new_targets = sorted(
-            new_tos.items(),
-            key=lambda item: item[1],
-        )
-        for to_full, _name in sorted_new_targets:
-            if to_full not in existing_by_to:
-                to_collection, to_id = to_full.split("/", 1)
-                edge = {
-                    "from_id": record_id,
-                    "from_collection": CollectionNames.RECORDS.value,
-                    "to_id": to_id,
-                    "to_collection": to_collection,
-                    "createdAtTimestamp": get_epoch_timestamp_in_ms(),
-                }
-                extracted = (extracted_names or {}).get(to_full)
-                if extracted:
-                    edge["extractedName"] = extracted
-                edges_to_create.append(edge)
-                self.logger.debug("Creating %s edge: %s -> %s", label, record_id, to_full)
-        if edges_to_create:
-            await tx_store.batch_create_edges(
-                edges_to_create, edge_collection
-            )
-
-        # 3. Delete edges that are stale (in existing but not in new)
-        stale_tos = [
-            to_full for to_full in existing_by_to
-            if to_full not in new_tos
-        ]
-        if stale_tos:
-            stale_tos = sorted(
-                stale_tos,
-                key=lambda to_full: existing_by_to[to_full]["name"],
-            )
-            from_collection, from_id = record_from.split("/", 1)
-            stale_edges = []
-            for to_full in stale_tos:
-                to_collection, to_id = to_full.split("/", 1)
-                stale_edges.append(
-                    {
-                        "from_id": from_id,
-                        "from_collection": from_collection,
-                        "to_id": to_id,
-                        "to_collection": to_collection,
-                    }
-                )
-
-            deleted_count = await tx_store.batch_delete_edges(stale_edges, edge_collection)
-            for to_full in stale_tos:
-                self.logger.info(f"🗑️ Deleted stale {label} edge: {record_id} -> {to_full}")
-            self.logger.info(
-                f"🧹 Deleted {deleted_count} stale {label} edges for record {record_id}"
-            )
 
     # ------------------------------------------------------------------
     # main persistence logic

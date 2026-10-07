@@ -258,6 +258,9 @@ class Record(BaseModel):
     parsing_status: str = Field(default=ProgressStatus.NOT_STARTED.value, description="Parsing status for the record (parse phase, ahead of indexing/extraction)")
     indexing_status: str = Field(default=ProgressStatus.QUEUED.value, description="Indexing status for the record")
     extraction_status: str = Field(default=ProgressStatus.NOT_STARTED.value, description="Extraction status for the record")
+    entity_extraction_status: str | None = Field(default=None, description="Named-entity extraction status, independent of extractionStatus")
+    last_entity_extraction_timestamp: int | None = Field(default=None)
+    entity_extraction_strategy: str | None = Field(default=None)
     reason: str | None = Field(default=None, description="Reason for the record status")
     # Epoch Timestamps
     created_at: int = Field(default_factory=get_epoch_timestamp_in_ms, description="Epoch timestamp in milliseconds of the record creation")
@@ -408,6 +411,10 @@ class Record(BaseModel):
         # key deletes the stored value, and most writers never set this field.
         if self.queued_at is not None:
             base["queuedAtTimestamp"] = self.queued_at
+        if self.entity_extraction_status is not None:
+            base["entityExtractionStatus"] = self.entity_extraction_status
+            base["lastEntityExtractionTimestamp"] = self.last_entity_extraction_timestamp
+            base["entityExtractionStrategy"] = self.entity_extraction_strategy
         # Only written once set: a pod still on the old strict Arango schema
         # rejects these keys, even as null, during a rolling upgrade.
         delete_state = {
@@ -480,6 +487,9 @@ class Record(BaseModel):
             parsing_status=arango_base_record.get("parsingStatus", ProgressStatus.NOT_STARTED.value),
             indexing_status=arango_base_record.get("indexingStatus", ProgressStatus.QUEUED.value),
             extraction_status=arango_base_record.get("extractionStatus", ProgressStatus.NOT_STARTED.value),
+            entity_extraction_status=arango_base_record.get("entityExtractionStatus"),
+            last_entity_extraction_timestamp=arango_base_record.get("lastEntityExtractionTimestamp"),
+            entity_extraction_strategy=arango_base_record.get("entityExtractionStrategy"),
             preview_renderable=arango_base_record.get("previewRenderable", True),
             is_shared=arango_base_record.get("isShared", False),
             is_vlm_ocr_processed=arango_base_record.get("isVLMOcrProcessed", False),
@@ -2754,6 +2764,9 @@ class CodeFileRecord(Record):
             parsing_status=arango_base_record.get("parsingStatus", ProgressStatus.NOT_STARTED.value),
             indexing_status=arango_base_record.get("indexingStatus", ProgressStatus.QUEUED.value),
             extraction_status=arango_base_record.get("extractionStatus", ProgressStatus.NOT_STARTED.value),
+            entity_extraction_status=arango_base_record.get("entityExtractionStatus"),
+            last_entity_extraction_timestamp=arango_base_record.get("lastEntityExtractionTimestamp"),
+            entity_extraction_strategy=arango_base_record.get("entityExtractionStrategy"),
             preview_renderable=arango_base_record.get("previewRenderable", True),
             is_shared=arango_base_record.get("isShared", False),
             is_vlm_ocr_processed=arango_base_record.get("isVLMOcrProcessed", False),
@@ -3351,6 +3364,7 @@ class EntityType(str, Enum):
     LANGUAGE = "language"
     RELATIONSHIP = "relationship"
     CUSTOM = "custom"
+    NAMED_ENTITY = "named_entity"
 
 
 class EntityTypeCategory(str, Enum):
@@ -3393,6 +3407,7 @@ class EntityRecord(BaseModel):
     connector_ids: list[str] = Field(default_factory=list, description="Connector instances that reference this entity; used for targeted disconnect cleanup")
     record_group_ids: list[str] = Field(default_factory=list, description="Record groups (e.g. folders, Jira projects) of records that reference this entity")
     level: str | None = Field(default=None, description="Subcategory level (\"1\", \"2\" or \"3\"); None for every other entity type. Subcategories only resolve against their own level.")
+    kind: str | None = Field(default=None, description="Named-entity kind. Set only for entity_type named_entity.")
 
     @property
     def embedding_text(self) -> str:
@@ -3449,7 +3464,7 @@ class EntityRecord(BaseModel):
         it), matching the records collection's ``VectorChunkPayload`` — see
         ``EntityVectorStore.upsert_entities_batch``.
         """
-        return {
+        payload = {
             "entityId": self.entity_id,
             "entityType": self.entity_type.value,
             "orgId": self.org_id,
@@ -3460,6 +3475,9 @@ class EntityRecord(BaseModel):
             "aliases": self.aliases,
             "level": self.level,
         }
+        if self.kind:
+            payload["kind"] = self.kind
+        return payload
 
 
 # Rebuild models to resolve forward references after all imports are complete

@@ -73,6 +73,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # DocumentExtraction is constructed with a no-op graph provider because
     # the extraction service API accepts pre-fetched departments directly.
+    app.state.entity_extraction_semaphore = asyncio.Semaphore(
+        max(1, int(os.getenv("MAX_CONCURRENT_ENTITY_EXTRACTIONS", "8")))
+    )
     app.state.document_extraction = DocumentExtraction(
         logger=app_logger,
         graph_provider=_NoOpGraphProvider(),

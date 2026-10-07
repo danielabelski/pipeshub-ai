@@ -5057,7 +5057,7 @@ class TestEnsureIndexes:
     async def test_calls_ensure_persistent_index(self, connected_provider):
         connected_provider.http_client.ensure_persistent_index = AsyncMock()
         await connected_provider._ensure_indexes()
-        assert connected_provider.http_client.ensure_persistent_index.await_count == 50
+        assert connected_provider.http_client.ensure_persistent_index.await_count == 57
 
     @pytest.mark.asyncio
     async def test_registers_the_purge_walk_index_by_name(self, connected_provider) -> None:
@@ -7415,7 +7415,9 @@ class TestEnsureIndexesExtended:
     async def test_calls_ensure_persistent_index(self, connected_provider):
         connected_provider.http_client.ensure_persistent_index = AsyncMock()
         await connected_provider._ensure_indexes()
-        assert connected_provider.http_client.ensure_persistent_index.await_count == 50
+        calls = connected_provider.http_client.ensure_persistent_index.await_args_list
+        assert len(calls) == 57
+        assert sum(1 for c in calls if c.args[0] == "namedEntities") == 7
 
 
 # ---------------------------------------------------------------------------
@@ -13912,7 +13914,12 @@ class TestDeleteRecordWithType:
         await connected_provider._delete_record_with_type(
             "r1", ["files", "mails"]
         )
-        assert connected_provider.delete_edges_from.call_count == 3
+        swept = [c.args[2] for c in connected_provider.delete_edges_from.await_args_list]
+        # Enrichment edges have no cascade in ArangoDB; left behind they would outlive the record.
+        assert swept == [
+            "recordRelations", "isOfType", "belongsTo",
+            "belongsToDepartment", "belongsToCategory", "belongsToLanguage", "belongsToTopic", "mentionsEntity",
+        ]
         assert connected_provider.delete_edges_to.call_count == 2
         assert connected_provider.delete_nodes.call_count == 3  # 2 type collections + 1 main record
 
@@ -15369,6 +15376,7 @@ class TestDeleteKbSpecificEdges:
         assert sorted(swept) == sorted({
             "isOfType", "recordRelations", "belongsTo", "permission",
             "belongsToCategory", "belongsToTopic", "belongsToLanguage", "belongsToDepartment",
+            "mentionsEntity",
         })
         assert all(c.args[1]["record_from"] == c.args[1]["record_to"] == "records/r1" for c in calls)
         assert all(c.kwargs["txn_id"] == "txn1" for c in calls)

@@ -458,6 +458,9 @@ class RetrievalService:
                 limit = DEFAULT_SEARCH_LIMIT
 
             filter_groups = filter_groups or {}
+            # Parsed before keys are lowercased. A later `.lower()` would turn
+            # entityFilters into a metadata term the graph does not understand.
+            entity_filters = filter_groups.pop("entityFilters", None) if filter_groups else None
 
             # Extract KB IDs for response metadata
             kb_ids = filter_groups.get('kb', None) if filter_groups else None
@@ -479,7 +482,10 @@ class RetrievalService:
 
             try:
                 containers, accessible_virtual_id_to_record_id, user = (
-                    await self._resolve_search_scope(user_id, org_id, filters, time_range)
+                    await self._resolve_search_scope(
+                        user_id, org_id, filters, time_range,
+                        force_record_scope=entity_filters is not None,
+                    )
                 )
             except PermissionVerificationUnavailableError as exc:
                 self.logger.warning(
@@ -504,6 +510,19 @@ class RetrievalService:
             elif not accessible_virtual_id_to_record_id:
                 self.logger.warning(f"No accessible documents found for user {user_id} and org {org_id}")
                 return self._create_empty_response(ACCESSIBLE_RECORDS_NOT_FOUND_MESSAGE, Status.ACCESSIBLE_RECORDS_NOT_FOUND)
+
+            if entity_filters:
+                from app.modules.retrieval.entity_filters import EntityFilterResolver
+
+                decision = await EntityFilterResolver(self.graph_provider).resolve(
+                    org_id, entity_filters, accessible_virtual_id_to_record_id or {},
+                )
+                if decision.error:
+                    return self._create_empty_response(decision.error, Status.ERROR)
+                accessible_virtual_id_to_record_id = decision.allowed
+                use_containers = False
+                if not accessible_virtual_id_to_record_id:
+                    return self._create_empty_response(ACCESSIBLE_RECORDS_NOT_FOUND_MESSAGE, Status.ACCESSIBLE_RECORDS_NOT_FOUND)
 
             # Graph key for KH permission_role checks (Location trails).
             user_key = (user.get("_key") or user.get("id")) if user else None
@@ -955,6 +974,7 @@ class RetrievalService:
         org_id: str,
         filters: dict[str, list[str]],
         time_range: dict[str, int] | None,
+        force_record_scope: bool = False,
     ) -> tuple["AccessibleContainers | None", dict[str, str], dict[str, Any] | None]:
         """Decide how this search's permission filter is built.
 
@@ -982,7 +1002,7 @@ class RetrievalService:
         # leave that call serialised behind the user lookup.
         # A container scope cannot leave one app out, so an exclusion keeps the
         # record-id path.
-        if excluded or not await self._container_filter_enabled():
+        if force_record_scope or excluded or not await self._container_filter_enabled():
             accessible, user = await asyncio.gather(_legacy(), user_task)
             return None, accessible, user
 

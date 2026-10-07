@@ -336,6 +336,19 @@ record_schema = {
             "duplicateReconcileDueAt": {"type": ["number", "null"]},
             "lastIndexTimestamp": {"type": ["number", "null"]},
             "lastExtractionTimestamp": {"type": ["number", "null"]},
+            "entityExtractionStatus": {
+                "type": "string",
+                "enum": [
+                    "NOT_STARTED",
+                    "IN_PROGRESS",
+                    "COMPLETED",
+                    "PARTIAL",
+                    "FAILED",
+                    "SKIPPED",
+                ],
+            },
+            "lastEntityExtractionTimestamp": {"type": ["number", "null"]},
+            "entityExtractionStrategy": {"type": ["string", "null"]},
             "summaryDocumentId": {"type": ["string", "null"]},
             "virtualRecordId": {"type": ["string", "null"], "default": None},
             "previewRenderable": {"type": ["boolean", "null"], "default": True},
@@ -823,6 +836,42 @@ record_group_schema = {
     },
     "level": "strict",
     "message": "Document does not match the record group schema.",
+}
+
+named_entity_schema = {
+    "rule": {
+        "type": "object",
+        "properties": {
+            "orgId": {"type": "string"},
+            "kind": {"type": "string"},
+            "category": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "name": {"type": "string"},
+            "normKey": {"type": "string"},
+            "aliases": {"type": "array", "items": {"type": "string"}},
+            "normalizedAliases": {"type": "array", "items": {"type": "string"}},
+            "schemaVersion": {"type": "integer"},
+            "createdAtTimestamp": {"type": "number"},
+            "updatedAtTimestamp": {"type": "number"},
+            "startMs": {"type": ["number", "null"]},
+            "endMs": {"type": ["number", "null"]},
+            "granularity": {"type": ["string", "null"]},
+            "timex": {"type": ["string", "null"]},
+            "amount": {"type": ["string", "null"]},
+            "amountFloat": {"type": ["number", "null"]},
+            "currency": {"type": ["string", "null"]},
+            "numericValue": {"type": ["number", "null"]},
+            "unit": {"type": ["string", "null"]},
+            "dimension": {"type": ["string", "null"]},
+            "siValue": {"type": ["number", "null"]},
+            "durationIso": {"type": ["string", "null"]},
+            "durationSeconds": {"type": ["number", "null"]},
+        },
+        "required": ["orgId", "kind", "name", "normKey"],
+        "additionalProperties": False,
+    },
+    "level": "strict",
+    "message": "Document does not match the named entity schema.",
 }
 
 department_schema = {

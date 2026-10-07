@@ -1,0 +1,36 @@
+{
+  "org": "org-ner-eval",
+  "note": "gold is the real-world entity each name means. Lookalikes that must stay apart: Acme Robotics / Acme Foods, Model X1 / Model X2, Apple (organization) / Apple (product), Jordan (person) / Jordan (country_region).",
+  "records": [
+    {"id": "r1", "entities": [
+      {"kind": "organization", "name": "Acme Robotics, Inc.", "gold": "acme-robotics"},
+      {"kind": "organization", "name": "Globex Corporation", "gold": "globex"},
+      {"kind": "person", "name": "Ada Lovelace", "gold": "ada"},
+      {"kind": "product", "name": "Model X1", "gold": "model-x1"}
+    ]},
+    {"id": "r2", "entities": [
+      {"kind": "organization", "name": "ACME Robotics", "gold": "acme-robotics"},
+      {"kind": "organization", "name": "Acme Foods", "gold": "acme-foods"},
+      {"kind": "organization", "name": "Globex", "gold": "globex"},
+      {"kind": "product", "name": "Model X2", "gold": "model-x2"}
+    ]},
+    {"id": "r3", "entities": [
+      {"kind": "organization", "name": "Acme Robotics Inc", "gold": "acme-robotics"},
+      {"kind": "organization", "name": "Apple", "gold": "apple-inc"},
+      {"kind": "product", "name": "Apple", "gold": "apple-fruit"},
+      {"kind": "person", "name": "Ada  Lovelace", "gold": "ada"}
+    ]},
+    {"id": "r4", "entities": [
+      {"kind": "organization", "name": "Apple Inc.", "gold": "apple-inc"},
+      {"kind": "person", "name": "Jordan", "gold": "jordan-person"},
+      {"kind": "country_region", "name": "Jordan", "gold": "jordan-country"},
+      {"kind": "organization", "name": "Globex Corp.", "gold": "globex"}
+    ]},
+    {"id": "r5", "entities": [
+      {"kind": "organization", "name": "Initech", "gold": "initech"},
+      {"kind": "organization", "name": "Initech LLC", "gold": "initech"},
+      {"kind": "product", "name": "Model X1", "gold": "model-x1"},
+      {"kind": "person", "name": "Lovelace", "gold": "ada"}
+    ]}
+  ]
+}

@@ -1,0 +1,35 @@
+# Gates for tests/evals/ner. The deterministic, replay and resolution gates
+# run in CI with no model. ab_gate is read by `run.py --strategy ab`, which
+# needs a real model and is run by hand or on a schedule.
+#
+# The golden rows include the cases the recognizers were fixed against, so
+# the free arms score 1.0 today. The floors sit below that so a new hard
+# row can land with a known miss instead of being left out.
+
+deterministic:
+  strict_f1: 0.9
+  partial_f1: 0.95
+  per_kind_strict_f1: 0.75
+  value_accuracy: 0.9
+
+replay:
+  strict_f1: 0.9
+  value_accuracy: 0.9
+  # Every stored mention is the block text at its offsets, and every
+  # extraction round-trips. Anything below 1.0 is a bug, not a quality dip.
+  grounding: 1.0
+  schema_validity: 1.0
+
+resolution:
+  bcubed_f1: 0.9
+  # One wrong merge joins two real entities in search; there is no budget.
+  max_over_merge_rate: 0.0
+
+# Promote the agent over single-call only when it earns its cost.
+ab_gate:
+  min_strict_f1_gain: 0.02
+  max_value_accuracy_drop: 0.0
+  min_grounding: 1.0
+  min_schema_validity: 1.0
+  max_p95_seconds: 45
+  max_cost_ratio: 3.0

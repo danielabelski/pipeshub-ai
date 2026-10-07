@@ -487,6 +487,34 @@ describe('enterprise_search/validators/es_validators', () => {
         expect(result.data.body).to.not.have.property('modelName')
       }
     })
+
+    it('should accept entityFilters', () => {
+      const data = {
+        body: {
+          query: 'invoices',
+          filters: {
+            entityFilters: {
+              kinds: ['currency'],
+              mentionedDate: { from: 1, to: 2 },
+              amount: { min: 10, max: 20, currency: 'USD' },
+            },
+          },
+        },
+      }
+      const result = enterpriseSearchSearchSchema.safeParse(data)
+      expect(result.success).to.be.true
+    })
+
+    it('should reject a date range whose start is after its end', () => {
+      const data = {
+        body: {
+          query: 'invoices',
+          filters: { entityFilters: { mentionedDate: { from: 5, to: 1 } } },
+        },
+      }
+      const result = enterpriseSearchSearchSchema.safeParse(data)
+      expect(result.success).to.be.false
+    })
   })
 
   describe('addMessageParamsSchema', () => {

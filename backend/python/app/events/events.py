@@ -452,6 +452,7 @@ class EventProcessor:
                     # parsingStatus is already COMPLETED from the write above.
                     "indexingStatus": ProgressStatus.EMPTY.value,
                     "extractionStatus": ProgressStatus.NOT_STARTED.value,
+                    "entityExtractionStatus": "SKIPPED",
                     "isDirty": False,
                 },
             )
@@ -504,8 +505,12 @@ class EventProcessor:
                 "📨 Deferring graph enrichment for record %s", record_id
             )
         else:
+            ner_task = None
             try:
                 departments = await self.graph_provider.get_departments(org_id)
+                ner_task = asyncio.create_task(
+                    self.sink_orchestrator.extract_named_entities(ctx, client=self.extraction_client)
+                )
                 semantic_metadata = await self.extraction_client.classify(
                     block_container=block_container,
                     org_id=org_id,
@@ -513,12 +518,14 @@ class EventProcessor:
                     record_name=record.record_name,
                     record_type=record.record_type.value,
                 )
+                extraction = await ner_task
 
                 record.semantic_metadata = semantic_metadata
-                if semantic_metadata:
+                if semantic_metadata and self.sink_orchestrator is not None:
                     # Canonical taxonomy names must be decided before the
                     # summary, blob and graph writes below all consume them.
                     await self.sink_orchestrator.resolve_entities(ctx)
+                    self.sink_orchestrator.attach_named_entities(ctx, extraction)
                 if semantic_metadata and (semantic_metadata.summary or "").strip():
                     await self.sink_orchestrator.vector_store.index_record_summary(
                         record_id,
@@ -529,10 +536,13 @@ class EventProcessor:
                     )
 
                 await self.sink_orchestrator.enrich(ctx)
+                await self.sink_orchestrator.persist_named_entities(ctx, extraction)
                 self.logger.info(
                     "✅ Graph enrichment completed for record %s", record_id
                 )
             except Exception as enrich_exc:
+                if ner_task is not None and not ner_task.done():
+                    ner_task.cancel()
                 self.logger.error(
                     "❌ Enrichment failed for record %s (document remains searchable): %s",
                     record_id,
@@ -603,6 +613,8 @@ class EventProcessor:
                 else None
             ),
         }
+        if status == ProgressStatus.EMPTY:
+            fields["entityExtractionStatus"] = "SKIPPED"
         success = await self.update_record_fields(doc, fields)
         self._require_persisted(
             success, f"Failed to persist status {status.value} for record", doc
@@ -981,6 +993,17 @@ class EventProcessor:
             "Failed to copy duplicate record relationships",
             doc,
         )
+        try:
+            await self.graph_provider.copy_named_entity_mentions(
+                _record_key(match.record),
+                _record_key(doc),
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Named-entity mention copy failed for duplicate %s (non-fatal): %s",
+                _record_key(doc),
+                exc,
+            )
         if attached_vrid and match.same_collection:
             await self.sync_vector_membership(attached_vrid)
         if match.same_collection and self.sink_orchestrator is not None:

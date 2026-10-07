@@ -34,6 +34,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+async def _named_entities_enabled(state: "ChatState") -> bool:
+    from app.services.featureflag.platform_settings import is_named_entity_extraction_enabled
+
+    return await is_named_entity_extraction_enabled(state.get("config_service"))
+
 _MAX_TOP_K = 25
 _DEFAULT_TOP_K = 10
 _PREVIEW_ENTITY_COUNT = 3
@@ -48,6 +54,7 @@ async def execute_search_entities(
     query: str | None,
     entity_types: list[str] | None = None,
     top_k: int | None = _DEFAULT_TOP_K,
+    named_entity_kinds: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Returns ``(success, json)``. A failure to resolve access or run the
     search is reported as a failed call, never as "no matching entities"."""
@@ -62,6 +69,13 @@ async def execute_search_entities(
         return False, _error("Entity search is not available in this deployment")
 
     requested = [str(t).strip().lower() for t in (entity_types or []) if str(t).strip()]
+    kinds = [str(k).strip().lower() for k in (named_entity_kinds or []) if str(k).strip()]
+    enabled = await _named_entities_enabled(state)
+    if not enabled:
+        requested = [t for t in requested if t != "named_entity"]
+        kinds = []
+    elif kinds and "named_entity" not in requested:
+        requested.append("named_entity")
     valid_types = [t for t in dict.fromkeys(requested) if t in SEARCHABLE_ENTITY_TYPES]
     if requested and not valid_types:
         supported = ", ".join(sorted(SEARCHABLE_ENTITY_TYPES))
@@ -78,6 +92,7 @@ async def execute_search_entities(
             context,
             query,
             entity_types=valid_types or None,
+            kinds=kinds or None,
             top_k=bounded_top_k,
         )
     except EntityAccessError:

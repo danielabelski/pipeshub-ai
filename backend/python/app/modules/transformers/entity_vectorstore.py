@@ -172,6 +172,7 @@ EMBEDDING_MODEL_FIELD = "embeddingModel"
 
 _STRING_METADATA_FIELDS = (
     "entityId", "entityType", "orgId", "name", "canonicalName", "domain", "typeCategory", "level",
+    "kind",
     EMBEDDING_MODEL_FIELD,
 )
 
@@ -470,6 +471,7 @@ class EntityVectorStore:
             ("metadata.entityType", {"type": "keyword"}),
             ("metadata.entityId", {"type": "keyword"}),
             ("metadata.level", {"type": "keyword"}),
+            ("metadata.kind", {"type": "keyword"}),
             (CONNECTOR_IDS_FIELD, {"type": "keyword"}),
             (RECORD_GROUP_IDS_FIELD, {"type": "keyword"}),
         ]:
@@ -1380,6 +1382,7 @@ class EntityVectorStore:
         passes: list[EntitySearchPass],
         *,
         entity_types: list[str] | None = None,
+        kinds: list[str] | None = None,
         top_k: int = 10,
         score_threshold: float = _CONFIDENCE_THRESHOLD,
     ) -> list[list[dict[str, Any]]]:
@@ -1443,6 +1446,8 @@ class EntityVectorStore:
                 must: dict[str, Any] = {"metadata.orgId": org_id}
                 if must_types is not None:
                     must["metadata.entityType"] = must_types  # list → "any of" filter
+                if kinds and must_types == ["named_entity"]:
+                    must["metadata.kind"] = list(kinds)
                 filter_kwargs: dict[str, Any] = {"must": must, "should": should}
                 if must_not_types is not None:
                     filter_kwargs["must_not"] = {"metadata.entityType": must_not_types}

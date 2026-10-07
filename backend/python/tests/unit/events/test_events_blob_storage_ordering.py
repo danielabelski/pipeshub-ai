@@ -36,6 +36,8 @@ def _make_event_processor():
     sink_orchestrator.index = AsyncMock()
     sink_orchestrator.enrich = AsyncMock()
     sink_orchestrator.resolve_entities = AsyncMock()
+    sink_orchestrator.extract_named_entities = AsyncMock(return_value=None)
+    sink_orchestrator.persist_named_entities = AsyncMock()
     sink_orchestrator.blob_storage = MagicMock()
     sink_orchestrator.blob_storage.apply = AsyncMock()
     sink_orchestrator.vector_store = MagicMock()

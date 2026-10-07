@@ -74,11 +74,71 @@ const appliedFiltersSchema = z
   })
   .optional();
 
-/** `{ apps, kb }` filter object reused across search/message/regenerate flows. */
+const boundedRange = (low: string, high: string) =>
+  z
+    .object({
+      [low]: z.number().optional(),
+      [high]: z.number().optional(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+      const start = value[low];
+      const end = value[high];
+      if (start != null && end != null && start > end) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${low} must be less than or equal to ${high}`,
+        });
+      }
+    });
+
+const entityFiltersSchema = z
+  .object({
+    kinds: z.array(z.string().min(1)).optional(),
+    name: z.string().min(1).optional(),
+    entityIds: z.array(z.string().min(1)).optional(),
+    mentionedDate: boundedRange('from', 'to').optional(),
+    amount: z
+      .object({
+        min: z.number().optional(),
+        max: z.number().optional(),
+        currency: z.string().length(3).optional(),
+      })
+      .strict()
+      .superRefine((value, ctx) => {
+        if (value.min != null && value.max != null && value.min > value.max) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'min must be less than or equal to max',
+          });
+        }
+      })
+      .optional(),
+    quantity: z
+      .object({
+        min: z.number().optional(),
+        max: z.number().optional(),
+        dimension: z.string().min(1).optional(),
+      })
+      .strict()
+      .superRefine((value, ctx) => {
+        if (value.min != null && value.max != null && value.min > value.max) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'min must be less than or equal to max',
+          });
+        }
+      })
+      .optional(),
+  })
+  .strict();
+
+/** `{ apps, kb, entityFilters }` filter object reused across search/message/regenerate flows. */
 const filtersSchema = z
   .object({
     apps: z.array(appOrKbIdSchema).optional(),
     kb: z.array(appOrKbIdSchema).optional(),
+    entityFilters: entityFiltersSchema.optional(),
   })
   .optional();
 

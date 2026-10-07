@@ -6566,6 +6566,53 @@ components:
           description: |
             Knowledge-base app ids to scope retrieval for this turn.
             Each element must be a valid UUID.
+        entityFilters:
+          type: object
+          additionalProperties: false
+          description: |
+            Typed named-entity constraints. Parsed before other filter keys are lowercased.
+            A match set larger than the graph cap is rejected as too broad.
+          properties:
+            kinds:
+              type: array
+              items:
+                type: string
+            name:
+              type: string
+            entityIds:
+              type: array
+              items:
+                type: string
+            mentionedDate:
+              type: object
+              additionalProperties: false
+              properties:
+                from:
+                  type: integer
+                  description: Range start, epoch milliseconds.
+                to:
+                  type: integer
+                  description: Range end, epoch milliseconds.
+            amount:
+              type: object
+              additionalProperties: false
+              properties:
+                min:
+                  type: number
+                max:
+                  type: number
+                currency:
+                  type: string
+            quantity:
+              type: object
+              additionalProperties: false
+              properties:
+                min:
+                  type: number
+                max:
+                  type: number
+                dimension:
+                  type: string
 
     AppliedFilterNode:
       type: object
@@ -13763,6 +13810,7 @@ components:
             - ENABLE_VECTOR_STORE_REBUILD: Allow admins to clean up and reindex the vector store
             - ENABLE_SKILLS: Allow users to create, import and manage Skills (SKILL.md packages) and let agents load them (default: true)
             - ENABLE_USER_CONTEXT: Include the current user's name, email, and organization in default assistant / Universal Agent system prompts (default: true)
+            - ENABLE_NAMED_ENTITY_EXTRACTION: Extract typed named entities while indexing (default: false)
           example:
             ENABLE_BETA_CONNECTORS: false
             ENABLE_SKILLS: true
@@ -14449,7 +14497,7 @@ components:
           description: |
             Unique feature flag key. Current keys: ENABLE_BETA_CONNECTORS,
             ENABLE_MCP, ENABLE_ACTIONS, ENABLE_VECTOR_STORE_REBUILD, ENABLE_SKILLS,
-            ENABLE_USER_CONTEXT.
+            ENABLE_USER_CONTEXT, ENABLE_NAMED_ENTITY_EXTRACTION.
           example: "ENABLE_BETA_CONNECTORS"
         label:
           type: string
@@ -41395,6 +41443,7 @@ paths:
         - ENABLE_VECTOR_STORE_REBUILD: Enable vector store cleanup/reindex from Connectors (default: false)
         - ENABLE_SKILLS: Enable Skills — SKILL.md packages agents can load (default: true)
         - ENABLE_USER_CONTEXT: Include user name, email, and organization in default assistant / Universal Agent system prompts (default: true)
+        - ENABLE_NAMED_ENTITY_EXTRACTION: Extract typed named entities while indexing (default: false)
       operationId: setPlatformSettings
       security:
         - bearerAuth: []

@@ -42,6 +42,7 @@ TAXONOMY_ENTITY_TYPES: frozenset[str] = frozenset(
 SEARCHABLE_ENTITY_TYPES: frozenset[str] = TAXONOMY_ENTITY_TYPES | {
     RECORD_ENTITY_TYPE,
     RECORD_GROUP_ENTITY_TYPE,
+    "named_entity",
 }
 
 # Redis TAG queries get too long past this; the connector pass still covers
@@ -361,6 +362,7 @@ async def search_entities_for_user(
     query: str,
     *,
     entity_types: list[str] | None = None,
+    kinds: list[str] | None = None,
     top_k: int = 10,
 ) -> list[EntityHit]:
     """Vector search in widening passes, keeping only entities the graph
@@ -384,6 +386,7 @@ async def search_entities_for_user(
             context.org_id,
             [EntitySearchPass(rg_ids, connector_ids, org_wide) for _, rg_ids, connector_ids, org_wide in passes],
             entity_types=entity_types,
+            kinds=kinds,
             top_k=fetch_k,
         )
     except Exception as exc:

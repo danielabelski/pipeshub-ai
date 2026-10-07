@@ -1490,6 +1490,7 @@ class Processor:
         }
         if indexing_status == ProgressStatus.EMPTY:
             status_update["reason"] = ""
+            status_update["entityExtractionStatus"] = "SKIPPED"
 
         success = await self.graph_provider.update_node(
             record_id,

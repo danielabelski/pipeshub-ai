@@ -123,3 +123,87 @@ async def classify(
             success=True, classification=metadata.model_dump()
         ).model_dump(),
     )
+
+
+class ExtractEntitiesRequest(BaseModel):
+    block_container: BlocksContainer
+    org_id: str | None = None
+    record_name: str = ""
+    record_type: str = ""
+    reference_time_ms: int | None = None
+    tz: str = "UTC"
+    enabled_kinds: list[str] = []
+    budgets: dict | None = None
+
+
+class ExtractEntitiesResponse(BaseModel):
+    success: bool
+    extraction: dict | None = None
+    error: str | None = None
+
+
+@router.post("/entities", response_model=ExtractEntitiesResponse, summary="Typed named-entity extraction")
+async def extract_entities(
+    request: Request,
+    body: ExtractEntitiesRequest,
+    claims: Mapping[str, Any] = Depends(require_classify_token),
+) -> JSONResponse:
+    """Extract typed entities. The model is loaded per request, not at startup."""
+    org_id = service_token_org(claims, body.org_id)
+    semaphore = getattr(request.app.state, "entity_extraction_semaphore", None)
+    if semaphore is not None and semaphore.locked():
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content=ExtractEntitiesResponse(success=False, error="entity extraction is busy").model_dump(),
+        )
+    from app.modules.named_entities.domain.config import NamedEntityBudgets
+    from app.modules.named_entities.domain.kinds import EntityKind
+    from app.modules.named_entities.extractor import NamedEntityExtractor, NamedEntityRequest, indexing_llm
+
+    enabled = None
+    if body.enabled_kinds:
+        parsed = set()
+        for raw in body.enabled_kinds:
+            try:
+                parsed.add(EntityKind(raw))
+            except ValueError:
+                continue
+        enabled = frozenset(parsed)
+    budgets = NamedEntityBudgets.model_validate(body.budgets) if body.budgets else None
+    config_service = request.app.container.config_service()
+    held = False
+    try:
+        if semaphore is not None:
+            await semaphore.acquire()
+            held = True
+        llm, transport, provider, model = await indexing_llm(config_service)
+        extraction = await NamedEntityExtractor().extract(
+            NamedEntityRequest(
+                blocks=body.block_container.blocks,
+                org_id=org_id,
+                record_name=body.record_name,
+                record_type=body.record_type,
+                reference_time_ms=body.reference_time_ms,
+                tz=body.tz,
+                enabled=enabled,
+                budgets=budgets,
+                llm=llm,
+                transport=transport,
+                provider_name=provider,
+                model_name=model,
+            )
+        )
+    except Exception as exc:
+        # The exception text can quote document content; report the type only.
+        logger.warning("Named-entity extraction failed for org '%s': %s", org_id, type(exc).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=ExtractEntitiesResponse(success=False, error=type(exc).__name__).model_dump(),
+        )
+    finally:
+        if held and semaphore is not None:
+            semaphore.release()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=ExtractEntitiesResponse(success=True, extraction=extraction.model_dump(mode="json")).model_dump(),
+    )
