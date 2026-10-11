@@ -9,6 +9,8 @@ exception hierarchy.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 # Emitted when reasoning + bound function tools cannot both go through the API
 # shape the request used.
 # - "please use /v1/responses instead": Chat Completions rejected the
@@ -63,3 +65,21 @@ def wants_responses_api(exc: Exception) -> bool:
     """
     message = str(exc).lower()
     return "please use /v1/responses instead" in message or "tool_choice.function" in message
+
+
+def is_prompt_cache_param_conflict(exc: Exception, sent: Iterable[str]) -> bool:
+    """True when the provider refused the request over a prompt-cache parameter
+    this request actually carried (a 400 naming it: "Unrecognized request
+    argument supplied: prompt_cache_retention", "cache_control: Extra inputs are
+    not permitted", ...). Recovering means resending without the cache
+    parameters, never changing the model's configuration."""
+    names = {name.lower() for name in sent if name}
+    if not names:
+        return False
+    status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+    message = str(exc).lower()
+    if status is not None and status != 400:
+        return False
+    if status is None and "400" not in message and "bad request" not in message and "invalid" not in message:
+        return False
+    return any(name in message for name in names)
