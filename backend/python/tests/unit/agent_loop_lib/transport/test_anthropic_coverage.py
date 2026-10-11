@@ -261,7 +261,8 @@ class TestUsageFrom:
         transport = _transport()
         response = _response(input_tokens=100, output_tokens=50, cache_read=10, cache_write=5)
         usage = transport._usage_from(response)
-        assert usage.input_tokens == 100
+        # Anthropic reports only the uncached part; TokenUsage counts all input.
+        assert usage.input_tokens == 115
         assert usage.cache_read_tokens == 10
         assert usage.cache_write_tokens == 5
         assert transport.total_cache_write_tokens == 5
@@ -314,56 +315,66 @@ class TestWrapError:
         assert wrapped.retryable is False
 
 
-class TestApplyPromptCache:
-    def test_noop_when_two_or_fewer_messages(self) -> None:
-        transport = _transport()
-        formatted = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}]
-        transport._apply_prompt_cache(formatted)
-        assert "cache_control" not in formatted[0]
+class TestMessageCache:
+    """The request's last block is cached: a top-level ``cache_control`` on
+    Anthropic's API, a marker on the last message anywhere else."""
 
-    def test_marks_last_large_tool_result_before_final_two_messages(self) -> None:
+    def test_top_level_on_anthropics_api(self) -> None:
+        formatted = [{"role": "user", "content": "hi"}]
+        assert _transport()._message_cache(formatted) == {"cache_control": {"type": "ephemeral"}}
+        assert formatted == [{"role": "user", "content": "hi"}]
+
+    def test_ttl(self) -> None:
+        assert _transport(cache_ttl="1h")._message_cache([]) == {"cache_control": {"type": "ephemeral", "ttl": "1h"}}
+
+    def test_off(self) -> None:
+        assert _transport(cache_ttl=None)._message_cache([{"role": "user", "content": "hi"}]) == {}
+
+    def test_elsewhere_marks_the_last_block(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://llm-proxy.example")
         transport = _transport()
-        big_result = "x" * 400
         formatted = [
             {"role": "user", "content": "hi"},
-            {"role": "user", "content": [{"type": "tool_result", "content": big_result}]},
-            {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
-            {"role": "user", "content": "next"},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "r"}]},
         ]
-        transport._apply_prompt_cache(formatted)
-        assert formatted[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
-        assert "cache_control" not in formatted[2]["content"][0]
+        assert transport._message_cache(formatted) == {}
+        assert formatted[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in str(formatted[0])
 
-    def test_small_content_is_not_marked(self) -> None:
-        transport = _transport()
-        formatted = [
-            {"role": "user", "content": [{"type": "tool_result", "content": "small"}]},
-            {"role": "user", "content": "x"},
-            {"role": "user", "content": "y"},
-        ]
-        transport._apply_prompt_cache(formatted)
-        assert "cache_control" not in formatted[0]["content"][0]
+    def test_elsewhere_promotes_a_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://llm-proxy.example")
+        formatted = [{"role": "user", "content": "hi"}]
+        _transport()._message_cache(formatted)
+        assert formatted == [{"role": "user", "content": [
+            {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}},
+        ]}]
 
-    def test_already_cached_block_is_skipped(self) -> None:
-        transport = _transport()
-        big = "x" * 400
-        formatted = [
-            {"role": "user", "content": [{"type": "text", "text": big, "cache_control": {"type": "ephemeral"}}]},
-            {"role": "user", "content": [{"type": "tool_result", "content": big}]},
-            {"role": "user", "content": "a"},
-            {"role": "user", "content": "b"},
-        ]
-        transport._apply_prompt_cache(formatted)
-        assert "cache_control" in formatted[1]["content"][0]
+    def test_elsewhere_leaves_an_assistant_turn_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://llm-proxy.example")
+        formatted = [{"role": "assistant", "content": [{"type": "thinking", "thinking": "x"}]}]
+        _transport()._message_cache(formatted)
+        assert "cache_control" not in str(formatted)
 
-    def test_non_list_content_is_skipped(self) -> None:
-        transport = _transport()
-        formatted = [
-            {"role": "user", "content": "plain string"},
-            {"role": "user", "content": "a"},
-            {"role": "user", "content": "b"},
-        ]
-        transport._apply_prompt_cache(formatted)  # must not raise
+    async def test_every_marker_on_one_request(self) -> None:
+        transport = _transport(cache_ttl="1h")
+        transport._client.messages.create = AsyncMock(return_value=_response())
+        await transport.complete(
+            [UserMessage(content="hi")], system_blocks=["stable", "volatile"],
+            tools=[ToolSchema(name="a", description="A", input_schema={}), ToolSchema(name="b", description="B", input_schema={})],
+        )
+        _, kwargs = transport._client.messages.create.call_args
+        one_hour = {"type": "ephemeral", "ttl": "1h"}
+        assert kwargs["cache_control"] == one_hour
+        assert [t.get("cache_control") for t in kwargs["tools"]] == [None, one_hour]
+        assert [b.get("cache_control") for b in kwargs["system"]] == [one_hour, None]
+
+    async def test_off_sends_no_marker(self) -> None:
+        transport = _transport(cache_ttl=None)
+        transport._client.messages.create = AsyncMock(return_value=_response())
+        await transport.complete(
+            [UserMessage(content="hi")], system="s", tools=[ToolSchema(name="a", description="A", input_schema={})],
+        )
+        assert "cache_control" not in str(transport._client.messages.create.call_args)
 
 
 class TestApplyToolCache:

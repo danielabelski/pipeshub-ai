@@ -65,11 +65,15 @@ class PromptCacheSettings:
 
     @property
     def breakpoint(self) -> dict[str, str]:
-        """The ``cache_control`` value for every Anthropic marker of a request;
-        one TTL throughout, so markers can never be out of TTL order."""
-        if self.anthropic_ttl == "5m":
-            return {"type": "ephemeral"}
-        return {"type": "ephemeral", "ttl": self.anthropic_ttl}
+        return anthropic_breakpoint(self.anthropic_ttl)
+
+
+def anthropic_breakpoint(ttl: str = "5m") -> dict[str, str]:
+    """The ``cache_control`` value for every Anthropic marker of a request; one
+    TTL throughout, so markers can never be out of TTL order."""
+    if ttl == "5m":
+        return {"type": "ephemeral"}
+    return {"type": "ephemeral", "ttl": ttl}
 
 
 def routing_key(org_id: str, conversation_id: str | None, shards: int) -> str:

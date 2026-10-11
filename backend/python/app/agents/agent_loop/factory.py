@@ -382,6 +382,7 @@ class PipesHubAgentFactory:
         def _direct_or_langchain() -> "LLMTransport":
             direct = build_direct_transport(
                 llm, model_name=model_name, model_key=model_key,
+                cache_settings=cache_settings, cache_routing_key=cache_key,
             )
             if direct is not None:
                 # The direct SDK transports have no image cap and no
