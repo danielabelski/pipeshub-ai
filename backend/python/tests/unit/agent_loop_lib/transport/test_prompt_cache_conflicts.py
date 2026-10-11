@@ -33,6 +33,24 @@ def test_an_anthropic_400_naming_cache_control() -> None:
     assert is_prompt_cache_param_conflict(exc, {"cache_control"})
 
 
+def _bedrock_error(status: int, message: str) -> Exception:
+    from botocore.exceptions import ClientError
+
+    return ClientError(
+        {"Error": {"Code": "ValidationException", "Message": message}, "ResponseMetadata": {"HTTPStatusCode": status}},
+        "Converse",
+    )
+
+
+def test_a_bedrock_validation_error_naming_cache_point() -> None:
+    exc = _bedrock_error(400, "The model returned the following errors: cachePoint is not supported for this model")
+    assert is_prompt_cache_param_conflict(exc, {"cachepoint"})
+
+
+def test_a_bedrock_throttle_is_not_a_cache_conflict() -> None:
+    assert not is_prompt_cache_param_conflict(_bedrock_error(429, "Too many requests with cachePoint"), {"cachepoint"})
+
+
 @pytest.mark.parametrize(("exc", "sent"), [
     (openai.BadRequestError("Error code: 400 - Invalid 'messages[3]'", response=_response(400), body=None), SENT),
     (openai.BadRequestError("Error code: 400 - prompt_cache_key is invalid", response=_response(400), body=None), set()),

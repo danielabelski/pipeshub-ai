@@ -76,10 +76,22 @@ def is_prompt_cache_param_conflict(exc: Exception, sent: Iterable[str]) -> bool:
     names = {name.lower() for name in sent if name}
     if not names:
         return False
-    status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+    status = _http_status(exc)
     message = str(exc).lower()
     if status is not None and status != 400:
         return False
-    if status is None and "400" not in message and "bad request" not in message and "invalid" not in message:
+    if status is None and not any(hint in message for hint in ("400", "bad request", "invalid", "validation")):
         return False
     return any(name in message for name in names)
+
+
+def _http_status(exc: Exception) -> int | None:
+    """The HTTP status of an SDK error: ``status_code`` (OpenAI, Anthropic,
+    httpx) or botocore's ``response["ResponseMetadata"]["HTTPStatusCode"]``."""
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        return status
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        return (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+    return getattr(response, "status_code", None)
