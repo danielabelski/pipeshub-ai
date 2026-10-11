@@ -60,8 +60,8 @@ class AnthropicCacheStrategy(CacheStrategy):
     name = "anthropic"
     sent_params = frozenset({ANTHROPIC_PARAM})
 
-    def __init__(self, breakpoint: dict[str, str], *, top_level: bool) -> None:  # noqa: A002
-        self._breakpoint = breakpoint
+    def __init__(self, marker: dict[str, str], *, top_level: bool) -> None:
+        self._breakpoint = marker
         self._top_level = top_level
 
     def system(self, stable: str, volatile: str) -> SystemMessage | None:
