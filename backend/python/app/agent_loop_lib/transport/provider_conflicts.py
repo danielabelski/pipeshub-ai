@@ -35,7 +35,7 @@ REASONING_MANDATORY_CONFLICT_MARKERS = ("reasoning is mandatory",)
 # Completions: "Invalid 'messages[5]'. Image URLs are only allowed for messages
 # with role 'user', but this message with role 'tool' contains an image URL."
 # Recovering means moving those images into a user message, not changing the
-# model's configuration -- see `LangChainTransport._tool_image_fallback`.
+# model's configuration -- see `LangChainTransport._relocates_tool_images`.
 TOOL_RESULT_IMAGE_MARKERS = (
     "only allowed for messages with role 'user'",
     'only allowed for messages with role "user"',
