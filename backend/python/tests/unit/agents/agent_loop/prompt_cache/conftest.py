@@ -40,10 +40,16 @@ _RESPONSES = {
 }
 
 
+def anthropic_reply(content: list[dict], stop_reason: str = "end_turn") -> dict:
+    return {**_ANTHROPIC, "content": content, "stop_reason": stop_reason}
+
+
 class RecordingEndpoint:
     def __init__(self) -> None:
         self.bodies: list[dict] = []
         self.paths: list[str] = []
+        # Replies served in order before falling back to the canned ones.
+        self.replies: list[dict] = []
         endpoint = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -51,7 +57,9 @@ class RecordingEndpoint:
                 length = int(self.headers.get("content-length") or 0)
                 endpoint.bodies.append(json.loads(self.rfile.read(length) or b"{}"))
                 endpoint.paths.append(self.path)
-                if "/messages" in self.path:
+                if endpoint.replies:
+                    reply = endpoint.replies.pop(0)
+                elif "/messages" in self.path:
                     reply = _ANTHROPIC
                 elif "/responses" in self.path:
                     reply = _RESPONSES
