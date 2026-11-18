@@ -25064,6 +25064,8 @@ class Neo4jProvider(NamedEntityGraphMixin, IGraphDBProvider):
         origin: str,
         edges: list[dict],
         transaction: str | None = None,
+        *,
+        keep_edge_types: Collection[str] = (),
     ) -> None:
         """See :meth:`IGraphDBProvider.replace_record_entity_relations`."""
         if not record_id or not to_collections or not origin:
@@ -25074,6 +25076,7 @@ class Neo4jProvider(NamedEntityGraphMixin, IGraphDBProvider):
         parameters: dict[str, Any] = {
             "record_id": record_id, "origin": origin, "inferred": EntityOrigin.INFERRED.value,
             "labels": [collection_to_label(c) for c in to_collections],
+            "keep": list(keep_edge_types),
         }
         grouped = self._edges_by_labels(edges)
         if sum(len(rows) for rows in grouped.values()) != len(edges):
@@ -25094,6 +25097,7 @@ class Neo4jProvider(NamedEntityGraphMixin, IGraphDBProvider):
             f"""
             OPTIONAL MATCH (:Record {{id: $record_id}})-[old:{rel}]->(target)
             WHERE any(l IN labels(target) WHERE l IN $labels) AND coalesce(old.origin, $inferred) = $origin
+              AND NOT coalesce(old.edgeType, '') IN $keep
             DELETE old
             WITH count(*) AS _
             {"".join(creates)}
