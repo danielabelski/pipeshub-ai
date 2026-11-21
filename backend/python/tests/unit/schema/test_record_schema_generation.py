@@ -27,6 +27,7 @@ from app.services.graph_db.arango.record_schema_guard import (
 PINNED = {
     2: "53cf2c2c1dd02fc6616e59bc8d67814a25887b4debf7f26399178514fa03b829",
     3: "f3f0ab23062f1b5875c4788e74cfd6da94c6a617e8195eb4a69918890ff962b6",  # + pendingVirtualRecordId
+    4: "6bc0af42125f62f244ce4736db03e5939694158e3946c2bdd1b1c6d6ad999dfb",  # + editionFields, chat-attachment uploader fields
 }
 # Change app_schema's rule -> bump APP_SCHEMA_GENERATION, then pin the new hash here.
 APPS_PINNED = {

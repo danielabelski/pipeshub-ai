@@ -11,6 +11,7 @@ from app.agent_loop_lib.sandbox.governor import (
     SandboxLimitExceeded,
     SandboxResourceGovernor,
 )
+from tests.support.settle import SETTLE_S
 
 
 @pytest.fixture
@@ -118,7 +119,7 @@ class TestSandboxResourceGovernor:
         assert told == [True] and not waiter.done()
 
         await gov.release(held)
-        lease = await asyncio.wait_for(waiter, 1)
+        lease = await asyncio.wait_for(waiter, SETTLE_S)
         assert gov.snapshot()["total"] == 1
         await gov.release(lease)
 

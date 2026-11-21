@@ -117,6 +117,7 @@ def test_kill_freshness_and_carry(tmp_path: Path, procs: list) -> None:
     holder.wait()
     t0 = time.time()
     got = _eventually(port, BRAKES, 101, timeout=30)
+    # wall-clock-ok: the helper's own 30 s timeout; a takeover takes a few seconds
     assert time.time() - t0 < 30
     assert got[BRAKES] == 101  # exactly the carry and the live counters: no loss, no double count
 
@@ -167,6 +168,7 @@ def test_scrape_latency_with_64_snapshot_files(tmp_path: Path) -> None:
             body = _scrape(exporter._port)
             times.append(time.perf_counter() - t)
         assert body['pipeshub_governor_pool_in_use{pool="heavy_parse",service="indexing"}'] == 64
+        # wall-clock-ok: upstream's bound: a scrape reads a carried snapshot (ms); a live collection takes seconds
         assert sorted(times)[len(times) // 2] <= 0.05
     finally:
         exporter._server.shutdown()

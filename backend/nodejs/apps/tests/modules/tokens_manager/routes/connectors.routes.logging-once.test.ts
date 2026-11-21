@@ -20,6 +20,7 @@ import { CrawlingSchedulerService } from '../../../../src/modules/crawling_manag
 import { AppConfig, registerAppUpstreams } from '../../../../src/modules/tokens_manager/config/config'
 import { createConnectorRouter } from '../../../../src/modules/tokens_manager/routes/connectors.routes'
 import { createOAuthRouter } from '../../../../src/modules/tokens_manager/routes/oauth.routes'
+import { VECTOR_STORE_REBUILD_AVAILABLE } from '../../../../src/edition'
 import { FakeBackend, RecordingProducer, buildConfig } from './connectors-http-harness'
 
 /**
@@ -268,8 +269,13 @@ describe('Connector routes: a request is logged once, with its connector', funct
     ['POST', `/api/v1/connectors/${CONNECTOR}/reindex`, {}],
     ['POST', `/api/v1/connectors/${CONNECTOR}/sync/stop`, undefined],
     ['POST', `/api/v1/connectors/${CONNECTOR}/resync`, { connectorName: 'Jira' }],
-    ['POST', '/api/v1/connectors/vector-store/cleanup', {}],
-    ['POST', '/api/v1/connectors/vector-store/reindex', {}],
+    // An edition that does not offer the rebuild refuses these before the service (tested below).
+    ...(VECTOR_STORE_REBUILD_AVAILABLE
+      ? ([
+          ['POST', '/api/v1/connectors/vector-store/cleanup', {}],
+          ['POST', '/api/v1/connectors/vector-store/reindex', {}],
+        ] as const)
+      : []),
     ['GET', '/api/v1/oauth/registry', undefined],
     ['GET', '/api/v1/oauth/registry/Jira', undefined],
     ['GET', '/api/v1/oauth/', undefined],
@@ -295,5 +301,15 @@ describe('Connector routes: a request is logged once, with its connector', funct
       expect(text).to.not.include(INSTANCE_NAME)
       expect(text).to.not.include(ADMIN.email)
     })
+  }
+
+  if (!VECTOR_STORE_REBUILD_AVAILABLE) {
+    for (const path of ['/api/v1/connectors/vector-store/cleanup', '/api/v1/connectors/vector-store/reindex']) {
+      it(`POST ${path}: refused here (403) without reaching the service, logged once`, async () => {
+        expect(await send('POST', path, {})).to.equal(403)
+        expect(backend.calls).to.have.length(0)
+        expect(byMessage('http.request.error')).to.have.length(1)
+      })
+    }
   }
 })

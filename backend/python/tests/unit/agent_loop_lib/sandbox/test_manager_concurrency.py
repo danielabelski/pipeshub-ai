@@ -23,6 +23,7 @@ from app.agent_loop_lib.sandbox.manager import (
     SandboxType,
     UnknownSandboxError,
 )
+from tests.support.settle import SETTLE_S
 
 
 class _FakeBackend:
@@ -245,7 +246,7 @@ class TestPerCallSlots:
         await asyncio.sleep(0.02)
         assert not t2.done()
         release.set()
-        assert await asyncio.wait_for(t2, 1) == "ran"
+        assert await asyncio.wait_for(t2, SETTLE_S) == "ran"
         await t1
         assert gov.snapshot()["total"] == 0
 
@@ -289,7 +290,7 @@ class TestPerCallSlots:
         await asyncio.sleep(0.02)
         assert notes == [("install_packages", True)]
         release.set()
-        assert await asyncio.wait_for(t2, 1) == [("install_packages", True), ("install_packages", False)]
+        assert await asyncio.wait_for(t2, SETTLE_S) == [("install_packages", True), ("install_packages", False)]
         await t1
 
     async def test_a_call_cancelled_while_waiting_takes_no_slot(self) -> None:
@@ -333,7 +334,7 @@ class TestPerCallSlots:
         t2 = asyncio.create_task(second())
         await asyncio.sleep(0.02)
         release.set()
-        assert await asyncio.wait_for(t2, 1) == "ran"
+        assert await asyncio.wait_for(t2, SETTLE_S) == "ran"
         await t1
 
     async def test_the_wait_note_is_cleared_when_the_wait_times_out(self) -> None:
@@ -380,6 +381,6 @@ class TestMeteredSlots:
         assert not waiting.done()
         assert not mgr._lock.locked()
         await holder.destroy_all()
-        await asyncio.wait_for(waiting, 1)
+        await asyncio.wait_for(waiting, SETTLE_S)
         await mgr.destroy_all()
         assert gov.snapshot()["total"] == 0
