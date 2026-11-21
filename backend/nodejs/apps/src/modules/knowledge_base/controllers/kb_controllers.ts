@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { setUntrustedContentHeaders } from '../../../libs/utils/untrusted-content.utils';
 import * as crypto from 'crypto';
 import { AuthenticatedUserRequest } from './../../../libs/middlewares/types';
 import { injectRequestHeaders } from '../../../libs/context/request-context';
@@ -32,6 +33,7 @@ import {
 import { mapWithConcurrency } from '../../../libs/utils/concurrency.util';
 import { isUserOrgAdmin } from '../../user_management/services/user-admin.service';
 import { setSampleAccountsSignIn } from '../../user_management/services/demo-accounts.service';
+import type { PrincipalDeactivationPort } from '../../agent-harness/application/principal-deactivation';
 import axios from 'axios';
 import { KeyValueStoreService } from '../../../libs/services/keyValueStore.service';
 import { AppConfig } from '../../tokens_manager/config/config';
@@ -298,7 +300,10 @@ export const setDemoDataPreference =
   };
 
 export const setDemoDataWorkspace =
-  (appConfig: AppConfig) =>
+  (
+    appConfig: AppConfig,
+    deactivation: () => PrincipalDeactivationPort | null = () => null,
+  ) =>
   async (
     req: AuthenticatedUserRequest,
     res: Response,
@@ -335,7 +340,9 @@ export const setDemoDataWorkspace =
       let response: Awaited<ReturnType<typeof executeConnectorCommand>>;
       if (!enabled) {
         // Off: stop the accounts first; if that fails, nothing is saved.
-        await setSampleAccountsSignIn(orgId, userId, false);
+        await setSampleAccountsSignIn(orgId, userId, false, {
+          deactivation: deactivation(),
+        });
         try {
           response = await executeConnectorCommand(
             `${url}/workspace`,
@@ -2226,7 +2233,7 @@ const RECORD_STREAM_RELAYED_HEADERS = [
 function refuseRecordStream(
   res: Response,
   status: number,
-  error: string,
+  error: string | { reasonCode?: string; message?: string },
 ): void {
   res.status(status);
   res.setHeader('Cache-Control', 'no-store');
@@ -2313,15 +2320,14 @@ export const getRecordBuffer =
         res.set('Content-Length', contentLength);
       }
 
-      // Set appropriate headers from the FastAPI response
+      // A record is someone's file or an agent's artifact: never a page at this origin (SEC-FS-04).
       const contentType = response.headers['content-type'];
-      if (contentType) {
-        res.set('Content-Type', String(contentType));
-      }
       const contentDisposition = response.headers['content-disposition'];
-      if (contentDisposition) {
-        res.set('Content-Disposition', String(contentDisposition));
-      }
+      setUntrustedContentHeaders(
+        (name, value) => res.set(name, value),
+        contentType ? String(contentType) : undefined,
+        contentDisposition ? String(contentDisposition) : undefined,
+      );
 
       // Pipe the streaming response directly to the client
       response.data.pipe(res);
@@ -2379,7 +2385,10 @@ export const getRecordBuffer =
             }
           | undefined;
         if (upstream) {
-          let errorMessage = 'Error from AI backend';
+          // A string, or the connector's `{reasonCode, message}` (e.g. converter_unavailable), relayed as is so the
+          // web app can offer the original file instead of a broken preview.
+          let errorMessage: string | { reasonCode?: string; message?: string } =
+            'Error from AI backend';
           try {
             const chunks: Buffer[] = [];
             await new Promise<void>((resolve, reject) => {
@@ -2395,13 +2404,21 @@ export const getRecordBuffer =
               error: parseError,
             });
           }
+          const upstreamStatus = upstream.status;
+          logger.error('Connector service refused the record stream', {
+            recordId: req.params.recordId,
+            status: upstreamStatus,
+            reasonCode:
+              typeof errorMessage === 'object'
+                ? errorMessage.reasonCode
+                : undefined,
+          });
           // A 429 is only actionable with the source's own backoff hint, which
           // the connector service put on the response for us to relay.
           const retryAfter = upstream.headers?.['retry-after'];
           if (typeof retryAfter === 'string' && retryAfter.length > 0) {
             res.set('Retry-After', retryAfter);
           }
-          const upstreamStatus = upstream.status;
           const contentRange: unknown = upstream.headers?.['content-range'];
           if (upstreamStatus === 416 && typeof contentRange === 'string') {
             res.set('Content-Range', contentRange);

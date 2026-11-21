@@ -13,6 +13,7 @@ import {
   orgEmailVerification,
   resetEmail,
   resetPassword,
+  scheduledRunEnded,
   suspiciousLoginAttempt,
 } from './emailTemplates';
 
@@ -61,6 +62,9 @@ export function getEmailContent(
 
     case EmailTemplateType.JoinRequestDecision:
       return joinRequestDecision(templateData);
+
+    case EmailTemplateType.ScheduledRunEnded as string:
+      return scheduledRunEnded(templateData);
 
     case EmailTemplateType.ConnectorAccountConnect as string:
       return connectorAccountConnect(templateData);
