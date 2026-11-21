@@ -123,7 +123,7 @@ export function McpServersLayout({
                 style={{ width: '100%' }}
               >
                 <TextField.Slot>
-                  <MaterialIcon name="search" size={16} color="var(--gray-9)" />
+                  <MaterialIcon name="search" size={16} color="var(--gray-11)" />
                 </TextField.Slot>
               </TextField.Root>
             </Box>
@@ -151,7 +151,7 @@ export function McpServersLayout({
                 textAlign: 'center',
               }}
             >
-              <MaterialIcon name="hub" size={36} color="var(--accent-9)" />
+              <MaterialIcon name="hub" size={36} color="var(--accent-11)" />
               <Text size="3" weight="medium" style={{ color: 'var(--gray-12)' }}>
                 {emptyTitle}
               </Text>
@@ -171,7 +171,7 @@ export function McpServersLayout({
               onEdit={onEdit}
             />
           ) : shownCatalog.length === 0 ? (
-            <Text size="2" align="center" style={{ color: 'var(--gray-10)', padding: 'var(--space-6)' }}>
+            <Text size="2" align="center" style={{ color: 'var(--gray-11)', padding: 'var(--space-6)' }}>
               {t('workspace.mcpServers.noResults')}
             </Text>
           ) : null}

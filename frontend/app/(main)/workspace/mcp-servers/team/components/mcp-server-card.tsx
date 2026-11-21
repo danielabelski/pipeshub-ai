@@ -50,7 +50,7 @@ export function McpServerCard({ title, description, iconUrl, typeId, addedCount 
           {iconUrl ? (
             <img src={iconUrl} alt="" width={16} height={16} />
           ) : (
-            <McpServerIcon typeId={typeId} name={title} size={16} color="var(--gray-10)" />
+            <McpServerIcon typeId={typeId} name={title} size={16} color="var(--gray-11)" />
           )}
         </Flex>
         <Text size="2" weight="medium" truncate style={{ color: 'var(--gray-12)' }}>
@@ -76,8 +76,8 @@ export function McpServerCard({ title, description, iconUrl, typeId, addedCount 
         <Flex align="center" gap="1">
           {addedCount > 0 && (
             <>
-              <MaterialIcon name="check" size={14} color="var(--gray-10)" />
-              <Text size="1" style={{ color: 'var(--gray-10)' }}>
+              <MaterialIcon name="check" size={14} color="var(--gray-11)" />
+              <Text size="1" style={{ color: 'var(--gray-11)' }}>
                 {t('workspace.mcpServers.catalog.added')}
               </Text>
             </>
